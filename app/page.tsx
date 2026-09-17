@@ -30,9 +30,13 @@ export default function Home(){
   const [aoi,setAoi]=useState<AoiInfo>(null);
 
   async function runAnalysis(){
+    if(!aoi?.geometry){
+      setResult({status:'AOI required',note:'Upload a Shapefile/GeoJSON first. Analysis is restricted to the uploaded AOI boundary.'});
+      return;
+    }
     setRunning(true);
     try{
-      const res=await fetch('/api/analyze',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({period,sensor,variables,aoi:aoi?.geometry||null,aoiName:aoi?.name||null})});
+      const res=await fetch('/api/analyze',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({period,sensor,variables,aoi:aoi?.geometry||null,aoiName:aoi?.name||null,clipToAoi:true,analysisExtent:'uploaded-aoi-only'})});
       const data=await res.json();
       setResult(data);
     }catch(e){
@@ -59,7 +63,7 @@ function Metric({label,value}:{label:string,value:string}){return <div className
 
 function AnalysisWorkspace({tab,period,setPeriod,sensor,setSensor,result,aoi,setAoi}:any){
   return <div className="grid">
-    <section className="card"><div className="mapframe"><div className="maplabel">{aoi?`AOI loaded: ${aoi.name}`:'Interactive AOI / Analysis Map'}</div><div className="mapcoords">{aoi?`${aoi.featureCount} feature(s) • ${aoi.format}`:'Basemap + GEE raster layers'}</div><div className="northmini">N ↑</div><div className="scalebar">0&nbsp;&nbsp;5&nbsp;&nbsp;10 km</div>{aoi&&<div className="uploadedAoi">AOI</div>}</div></section>
+    <section className="card"><AoiMap aoi={aoi}/></section>
     <aside className="card"><div className="form">
       {tab==='Map & AOI'&&<AoiUploader aoi={aoi} setAoi={setAoi}/>}
       <div className="field"><label>Analysis period</label><div className="twocol"><input value={period.start} onChange={e=>setPeriod({...period,start:e.target.value})}/><input value={period.end} onChange={e=>setPeriod({...period,end:e.target.value})}/></div></div>
@@ -76,6 +80,8 @@ function AoiMap({aoi}:any){
   const elRef=useRef<HTMLDivElement>(null);
   const mapRef=useRef<any>(null);
   const layerRef=useRef<any>(null);
+  const baseRef=useRef<any>(null);
+  const [base,setBase]=useState('Satellite');
 
   useEffect(()=>{
     let cancelled=false;
@@ -84,11 +90,8 @@ function AoiMap({aoi}:any){
       const L=await import('leaflet');
       if(cancelled||!elRef.current) return;
       const map=L.map(elRef.current,{zoomControl:true,attributionControl:true}).setView([-2.2,115.5],6);
-      L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',{
-        attribution:'Tiles © Esri — Source: Esri, Maxar, Earthstar Geographics'
-      }).addTo(map);
       mapRef.current=map;
-      setTimeout(()=>map.invalidateSize(),100);
+      setTimeout(()=>map.invalidateSize(),150);
     })();
     return()=>{cancelled=true;if(mapRef.current){mapRef.current.remove();mapRef.current=null;}};
   },[]);
@@ -100,14 +103,47 @@ function AoiMap({aoi}:any){
       if(!map) return;
       const L=await import('leaflet');
       if(cancelled) return;
-      if(layerRef.current){layerRef.current.remove();layerRef.current=null;}
+      if(baseRef.current){map.removeLayer(baseRef.current);baseRef.current=null;}
+      const configs:any={
+        Satellite:{
+          url:'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+          attr:'Tiles © Esri, Maxar, Earthstar Geographics'
+        },
+        Topographic:{
+          url:'https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png',
+          attr:'Map data © OpenStreetMap contributors, SRTM | Map style © OpenTopoMap'
+        },
+        Street:{
+          url:'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+          attr:'© OpenStreetMap contributors'
+        },
+        Terrain:{
+          url:'https://server.arcgisonline.com/ArcGIS/rest/services/World_Terrain_Base/MapServer/tile/{z}/{y}/{x}',
+          attr:'Tiles © Esri'
+        }
+      };
+      const c=configs[base];
+      baseRef.current=L.tileLayer(c.url,{attribution:c.attr,maxZoom:19}).addTo(map);
+      baseRef.current.bringToBack?.();
+    })();
+    return()=>{cancelled=true};
+  },[base]);
+
+  useEffect(()=>{
+    let cancelled=false;
+    (async()=>{
+      const map=mapRef.current;
+      if(!map) return;
+      const L=await import('leaflet');
+      if(cancelled) return;
+      if(layerRef.current){map.removeLayer(layerRef.current);layerRef.current=null;}
       if(aoi?.geometry){
         const layer=L.geoJSON(aoi.geometry,{
-          style:{color:'#00ff9c',weight:3,fillColor:'#00ff9c',fillOpacity:0.08}
+          style:{color:'#00ff9c',weight:3,fillColor:'#00ff9c',fillOpacity:0.10}
         }).addTo(map);
         layerRef.current=layer;
         const bounds=layer.getBounds();
-        if(bounds.isValid()) map.fitBounds(bounds.pad(0.12));
+        if(bounds.isValid()) map.fitBounds(bounds.pad(0.08),{maxZoom:16});
       }else{
         map.setView([-2.2,115.5],6);
       }
@@ -116,8 +152,17 @@ function AoiMap({aoi}:any){
   },[aoi]);
 
   return <div className="realMapWrap">
+    <div className="basemapPicker">
+      <label>Basemap</label>
+      <select value={base} onChange={e=>setBase(e.target.value)}>
+        <option>Satellite</option>
+        <option>Topographic</option>
+        <option>Street</option>
+        <option>Terrain</option>
+      </select>
+    </div>
     <div ref={elRef} className="realMap"/>
-    <div className="mapStatus">{aoi?<>AOI: <b>{aoi.name}</b> • {aoi.featureCount} feature(s)</>:'Upload SHP/GeoJSON to zoom to the true AOI geometry'}</div>
+    <div className="mapStatus">{aoi?<>Analysis extent locked to AOI: <b>{aoi.name}</b> • {aoi.featureCount} feature(s)</>:'Upload SHP/GeoJSON to define the analysis boundary'}</div>
   </div>
 }
 
