@@ -15,7 +15,8 @@
     "html-to-image": "1.11.13",
     "jspdf": "2.5.2",
     "docx": "9.5.1",
-    "shpjs": "6.2.0"
+    "shpjs": "6.2.0",
+    "@google/earthengine": "^1.7.31"
   },
   "devDependencies": {
     "typescript": "5.9.2",
