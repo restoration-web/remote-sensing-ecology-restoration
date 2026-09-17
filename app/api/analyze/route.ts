@@ -247,8 +247,8 @@ export async function POST(req:NextRequest){
       areaHa:area,
       period:{start:startYear,end:endYear},
       sceneCount:count,
-      summary:meanValues,
-      stdDev:stdValues,
+      summary:summary,
+      stdDev:stdDev,
       annualNDVI:validRows.map((r:any)=>({year:r.year,NDVI:r.NDVI??null,sceneCount:r.sceneCount})),
       notes:{
         reclamationAge:'NA — requires a reclamation-year layer or user-supplied attribute.',
