@@ -4,12 +4,17 @@ export const runtime='nodejs';
 
 export async function POST(req:NextRequest){
   const payload=await req.json();
+  if(!payload?.aoi){
+    return NextResponse.json({status:'AOI required',note:'Analysis is restricted to the uploaded AOI. Upload SHP/GeoJSON before running analysis.'},{status:400});
+  }
+  payload.clipToAoi=true;
+  payload.analysisExtent='uploaded-aoi-only';
   const backend=process.env.EXISTING_GEE_BACKEND_URL;
   if(!backend){
     return NextResponse.json({
       status:'adapter-ready',
       note:'Set EXISTING_GEE_BACKEND_URL in Vercel to forward analysis requests to the previous Google Earth Engine backend.',
-      received:{period:payload.period,sensor:payload.sensor,variables:payload.variables?.length||0}
+      received:{period:payload.period,sensor:payload.sensor,variables:payload.variables?.length||0,aoiName:payload.aoiName,clipToAoi:true}
     });
   }
   const upstream=await fetch(backend,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload),cache:'no-store'});
