@@ -5,7 +5,13 @@ import {useEffect, useMemo, useRef, useState} from 'react';
 type AnalysisResult = {
   status: string;
   note?: string;
-  summary?: Record<string, number>;
+  stage?: string;
+  areaHa?: number;
+  sceneCount?: number;
+  period?: {start:number; end:number};
+  summary?: Record<string, number | null>;
+  stdDev?: Record<string, number | null>;
+  annualNDVI?: Array<{year:number; NDVI:number | null; sceneCount:number}>;
 };
 
 type AoiInfo = {
@@ -21,7 +27,7 @@ const tabs = ['Map & AOI','Ecological Indices','Environmental Drivers','Recovery
 export default function Home(){
   const [tab,setTab]=useState('Map & AOI');
   const [period,setPeriod]=useState({start:'2000',end:'2026'});
-  const [sensor,setSensor]=useState('Landsat + Sentinel-2');
+  const [sensor,setSensor]=useState('Landsat 5/7/8/9');
   const [mapType,setMapType]=useState('Study Area Map');
   const [layout,setLayout]=useState('Double column — 180 mm');
   const [dpi,setDpi]=useState('600 dpi');
@@ -35,13 +41,48 @@ export default function Home(){
       return;
     }
     setRunning(true);
+    setResult(null);
     try{
-      const res=await fetch('/api/analyze',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({period,sensor,variables,aoi:aoi?.geometry||null,aoiName:aoi?.name||null,clipToAoi:true,analysisExtent:'uploaded-aoi-only'})});
-      const data=await res.json();
+      const res=await fetch('/api/analyze',{
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({
+          period,
+          sensor,
+          variables,
+          aoi:aoi.geometry,
+          aoiName:aoi.name,
+          clipToAoi:true,
+          analysisExtent:'uploaded-aoi-only'
+        })
+      });
+
+      const raw=await res.text();
+      let data:any;
+      try{
+        data=raw?JSON.parse(raw):{};
+      }catch{
+        throw new Error(`API returned HTTP ${res.status} with a non-JSON response: ${raw.slice(0,240)||'empty response'}`);
+      }
+
+      if(!res.ok){
+        setResult({
+          status:data?.status||`HTTP ${res.status}`,
+          note:data?.note||data?.message||`Analysis request failed with HTTP ${res.status}.`,
+          stage:data?.stage
+        });
+        return;
+      }
       setResult(data);
-    }catch(e){
-      setResult({status:'adapter-ready',note:'Frontend is ready. Connect the previous Google Earth Engine endpoint through EXISTING_GEE_BACKEND_URL.'});
-    }finally{setRunning(false)}
+    }catch(e:any){
+      setResult({
+        status:'network-or-runtime-error',
+        note:e?.message||String(e),
+        stage:'frontend-fetch'
+      });
+    }finally{
+      setRunning(false);
+    }
   }
 
   return <div className="shell">
@@ -54,25 +95,25 @@ export default function Home(){
     <main className="main">
       <div className="top"><div><div className="title">{tab}</div><div className="sub">Reproducible workflow for post-mining ecological restoration studies</div></div><div className="actions"><button className="secondary" onClick={()=>alert('Project settings stored in this browser session.')}>Save Project</button><button onClick={runAnalysis}>{running?'Running…':'Run Analysis'}</button></div></div>
       <div className="metricgrid"><Metric label="AOI" value={aoi?`${aoi.featureCount} feature${aoi.featureCount===1?'':'s'}`:'Not uploaded'}/><Metric label="Period" value={`${period.start}–${period.end}`}/><Metric label="Variables" value="12"/><Metric label="Outputs" value="Q1 Pack"/></div>
-      {tab==='Publication Maps'?<PublicationMaps mapType={mapType} setMapType={setMapType} layout={layout} setLayout={setLayout} dpi={dpi} setDpi={setDpi} aoi={aoi}/>:tab==='Paper Report'?<PaperReport period={period} sensor={sensor} result={result} aoi={aoi}/>:<AnalysisWorkspace tab={tab} period={period} setPeriod={setPeriod} sensor={sensor} setSensor={setSensor} result={result} aoi={aoi} setAoi={setAoi}/>} 
+      {tab==='Publication Maps'?<PublicationMaps mapType={mapType} setMapType={setMapType} layout={layout} setLayout={setLayout} dpi={dpi} setDpi={setDpi} aoi={aoi}/>:tab==='Paper Report'?<PaperReport period={period} sensor={sensor} result={result} aoi={aoi}/>:<AnalysisWorkspace tab={tab} period={period} setPeriod={setPeriod} sensor={sensor} setSensor={setSensor} result={result} aoi={aoi} setAoi={setAoi} runAnalysis={runAnalysis} running={running}/>} 
     </main>
   </div>
 }
 
 function Metric({label,value}:{label:string,value:string}){return <div className="metric"><span>{label}</span><b>{value}</b></div>}
 
-function AnalysisWorkspace({tab,period,setPeriod,sensor,setSensor,result,aoi,setAoi}:any){
+function AnalysisWorkspace({tab,period,setPeriod,sensor,setSensor,result,aoi,setAoi,runAnalysis,running}:any){
   return <div className="grid">
     <section className="card"><AoiMap aoi={aoi}/></section>
     <aside className="card"><div className="form">
       {tab==='Map & AOI'&&<AoiUploader aoi={aoi} setAoi={setAoi}/>}
       <div className="field"><label>Analysis period</label><div className="twocol"><input value={period.start} onChange={e=>setPeriod({...period,start:e.target.value})}/><input value={period.end} onChange={e=>setPeriod({...period,end:e.target.value})}/></div></div>
-      <div className="field"><label>Satellite</label><select value={sensor} onChange={e=>setSensor(e.target.value)}><option>Landsat 5/7/8/9</option><option>Sentinel-2</option><option>Landsat + Sentinel-2</option></select></div>
+      <div className="field"><label>Satellite</label><select value={sensor} onChange={e=>setSensor(e.target.value)}><option>Landsat 5/7/8/9</option><option disabled>Sentinel-2 — harmonization pending</option><option disabled>Landsat + Sentinel-2 — harmonization pending</option></select><div className="hint">Current reproducible backend uses Landsat Collection 2 Level 2 only. Sentinel-2 will be enabled after a declared harmonization method is implemented.</div></div>
       <div className="field"><label>Variables</label><div className="chips">{variables.map(x=><span className="chip" key={x}>{x}</span>)}</div></div>
       <div className="field"><label>Current module</label><div className="hint">{moduleText(tab)}</div></div>
-      {result&&<div className="statusbox"><b>Backend status:</b> {result.status}<br/><span>{result.note}</span></div>}
+      {result&&<div className="statusbox"><b>Backend status:</b> {result.status}{result.stage?<> • <b>Stage:</b> {result.stage}</>:null}<br/><span>{result.note||'Request completed.'}</span></div>}
       {result?.status==='success'&&<ResultSummary result={result}/>}
-      <button onClick={()=>document.querySelector<HTMLButtonElement>('.top .actions button:last-child')?.click()}>Run {tab}</button>
+      <button onClick={runAnalysis} disabled={running}>{running?'Running…':`Run ${tab}`}</button>
     </div></aside>
   </div>
 }
