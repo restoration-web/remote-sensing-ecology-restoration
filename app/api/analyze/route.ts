@@ -150,10 +150,9 @@ export async function POST(req:NextRequest){
         tileScale:8
       }));
 
-      return ee.Feature(null,stats.set({
-        year:y,
-        sceneCount:n
-      }));
+      return ee.Feature(null,stats
+        .set('year',y)
+        .set('sceneCount',n));
     }));
 
     const annualInfo=await evaluate(annual);
