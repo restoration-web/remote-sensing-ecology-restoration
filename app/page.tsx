@@ -71,8 +71,22 @@ function AnalysisWorkspace({tab,period,setPeriod,sensor,setSensor,result,aoi,set
       <div className="field"><label>Variables</label><div className="chips">{variables.map(x=><span className="chip" key={x}>{x}</span>)}</div></div>
       <div className="field"><label>Current module</label><div className="hint">{moduleText(tab)}</div></div>
       {result&&<div className="statusbox"><b>Backend status:</b> {result.status}<br/><span>{result.note}</span></div>}
-      <button>Run {tab}</button>
+      {result?.status==='success'&&<ResultSummary result={result}/>}
+      <button onClick={()=>document.querySelector<HTMLButtonElement>('.top .actions button:last-child')?.click()}>Run {tab}</button>
     </div></aside>
+  </div>
+}
+
+function ResultSummary({result}:any){
+  const keys=['NDVI','EVI','SAVI','FVC','NDMI','NDWI','BSI','LST','Rainfall','Elevation','Slope'];
+  return <div className="resultPanel">
+    <div className="resultHead"><b>Analysis Results</b><span>{Number(result.areaHa||0).toLocaleString(undefined,{maximumFractionDigits:1})} ha • {result.sceneCount||0} Landsat scenes</span></div>
+    <div className="resultGrid">{keys.map(k=><div className="resultItem" key={k}><span>{k}</span><b>{result.summary?.[k]==null?'NA':Number(result.summary[k]).toFixed(k==='LST'?2:3)}</b></div>)}</div>
+    {Array.isArray(result.annualNDVI)&&result.annualNDVI.length>0&&<div className="trendMini">
+      <div className="trendTitle">Annual NDVI trajectory</div>
+      <div className="trendBars">{result.annualNDVI.filter((x:any)=>x.NDVI!=null).map((x:any)=><div key={x.year} title={`${x.year}: ${Number(x.NDVI).toFixed(3)}`} className="trendBar" style={{height:`${Math.max(4,Math.min(60,(Number(x.NDVI)+0.2)*55))}px`}}></div>)}</div>
+      <div className="trendYears"><span>{result.period?.start}</span><span>{result.period?.end}</span></div>
+    </div>}
   </div>
 }
 
