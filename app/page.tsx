@@ -1,6 +1,6 @@
 'use client';
 
-import {useMemo, useRef, useState} from 'react';
+import {useEffect, useMemo, useRef, useState} from 'react';
 
 type AnalysisResult = {
   status: string;
@@ -69,6 +69,55 @@ function AnalysisWorkspace({tab,period,setPeriod,sensor,setSensor,result,aoi,set
       {result&&<div className="statusbox"><b>Backend status:</b> {result.status}<br/><span>{result.note}</span></div>}
       <button>Run {tab}</button>
     </div></aside>
+  </div>
+}
+
+function AoiMap({aoi}:any){
+  const elRef=useRef<HTMLDivElement>(null);
+  const mapRef=useRef<any>(null);
+  const layerRef=useRef<any>(null);
+
+  useEffect(()=>{
+    let cancelled=false;
+    (async()=>{
+      if(!elRef.current||mapRef.current) return;
+      const L=await import('leaflet');
+      if(cancelled||!elRef.current) return;
+      const map=L.map(elRef.current,{zoomControl:true,attributionControl:true}).setView([-2.2,115.5],6);
+      L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',{
+        attribution:'Tiles © Esri — Source: Esri, Maxar, Earthstar Geographics'
+      }).addTo(map);
+      mapRef.current=map;
+      setTimeout(()=>map.invalidateSize(),100);
+    })();
+    return()=>{cancelled=true;if(mapRef.current){mapRef.current.remove();mapRef.current=null;}};
+  },[]);
+
+  useEffect(()=>{
+    let cancelled=false;
+    (async()=>{
+      const map=mapRef.current;
+      if(!map) return;
+      const L=await import('leaflet');
+      if(cancelled) return;
+      if(layerRef.current){layerRef.current.remove();layerRef.current=null;}
+      if(aoi?.geometry){
+        const layer=L.geoJSON(aoi.geometry,{
+          style:{color:'#00ff9c',weight:3,fillColor:'#00ff9c',fillOpacity:0.08}
+        }).addTo(map);
+        layerRef.current=layer;
+        const bounds=layer.getBounds();
+        if(bounds.isValid()) map.fitBounds(bounds.pad(0.12));
+      }else{
+        map.setView([-2.2,115.5],6);
+      }
+    })();
+    return()=>{cancelled=true};
+  },[aoi]);
+
+  return <div className="realMapWrap">
+    <div ref={elRef} className="realMap"/>
+    <div className="mapStatus">{aoi?<>AOI: <b>{aoi.name}</b> • {aoi.featureCount} feature(s)</>:'Upload SHP/GeoJSON to zoom to the true AOI geometry'}</div>
   </div>
 }
 
