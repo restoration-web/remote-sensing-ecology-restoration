@@ -119,65 +119,125 @@ export async function POST(req:NextRequest){
       return NextResponse.json({status:'no-data',note:'No Landsat Level-2 scenes were found for this AOI and period.'},{status:422});
     }
 
-    const composite=collection.median().clip(geom);
-    const ndviPct=composite.select('NDVI').reduceRegion({
-      reducer:ee.Reducer.percentile([5,95]),
-      geometry:geom,
-      scale:30,
-      maxPixels:1e9,
-      bestEffort:true
-    });
-    const p5=ee.Number(ndviPct.get('NDVI_p5'));
-    const p95=ee.Number(ndviPct.get('NDVI_p95'));
-    const fvc=composite.select('NDVI').subtract(p5).divide(p95.subtract(p5))
-      .clamp(0,1).pow(2).rename('FVC');
-
-    const years=Math.max(1,endYear-startYear+1);
-    const rain=ee.ImageCollection('UCSB-CHG/CHIRPS/DAILY')
-      .filterDate(start,end).filterBounds(geom).sum().divide(years).rename('Rainfall');
-    const elev=ee.Image('USGS/SRTMGL1_003').select('elevation').rename('Elevation');
-    const slope=ee.Terrain.slope(elev).rename('Slope');
-
-    const stack=composite.select(['NDVI','EVI','SAVI','NDMI','NDWI','BSI','LST'])
-      .addBands(fvc).addBands(rain).addBands(elev).addBands(slope).clip(geom);
-
-    const means=stack.reduceRegion({
-      reducer:ee.Reducer.mean(),
-      geometry:geom,
-      scale:30,
-      maxPixels:1e9,
-      bestEffort:true
-    });
-
-    const std=stack.reduceRegion({
-      reducer:ee.Reducer.stdDev(),
-      geometry:geom,
-      scale:30,
-      maxPixels:1e9,
-      bestEffort:true
-    });
-
     const areaHa=geom.area(1).divide(10000);
-
     const yearList=ee.List.sequence(startYear,endYear);
+
+    // Memory-safe strategy: reduce one annual composite at a time instead of
+    // constructing a 26-year multiband median over the whole AOI.
     const annual=ee.FeatureCollection(yearList.map((y:any)=>{
       y=ee.Number(y);
       const ys=ee.Date.fromYMD(y,1,1);
       const ye=ys.advance(1,'year');
       const yearly=collection.filterDate(ys,ye);
       const n=yearly.size();
-      const img=ee.Image(ee.Algorithms.If(n.gt(0),yearly.median(),ee.Image.constant(0).rename('NDVI')));
-      const val=ee.Algorithms.If(
+
+      const empty=ee.Image.constant([0,0,0,0,0,0,0])
+        .rename(['NDVI','EVI','SAVI','NDMI','NDWI','BSI','LST'])
+        .updateMask(ee.Image.constant(0));
+
+      const img=ee.Image(ee.Algorithms.If(
         n.gt(0),
-        img.select('NDVI').reduceRegion({reducer:ee.Reducer.mean(),geometry:geom,scale:30,maxPixels:1e9,bestEffort:true}).get('NDVI'),
-        null
-      );
-      return ee.Feature(null,{year:y,NDVI:val,sceneCount:n});
+        yearly.select(['NDVI','EVI','SAVI','NDMI','NDWI','BSI','LST']).median(),
+        empty
+      )).clip(geom);
+
+      const stats=ee.Dictionary(img.reduceRegion({
+        reducer:ee.Reducer.mean(),
+        geometry:geom,
+        scale:60,
+        maxPixels:1e8,
+        bestEffort:true,
+        tileScale:8
+      }));
+
+      return ee.Feature(null,stats.set({
+        year:y,
+        sceneCount:n
+      }));
     }));
 
-    const [meanValues,stdValues,area,annualInfo]=await Promise.all([
-      evaluate(means),evaluate(std),evaluate(areaHa),evaluate(annual)
+    const annualInfo=await evaluate(annual);
+    const rows=(annualInfo?.features||[]).map((f:any)=>f.properties||{});
+    const validRows=rows.filter((r:any)=>Number(r.sceneCount||0)>0);
+
+    if(!validRows.length){
+      return NextResponse.json({status:'no-data',note:'No usable Landsat observations remained after masking.'},{status:422});
+    }
+
+    const keys=['NDVI','EVI','SAVI','NDMI','NDWI','BSI','LST'];
+    const summary:any={};
+    const stdDev:any={};
+    for(const k of keys){
+      const vals=validRows.map((r:any)=>Number(r[k])).filter((v:number)=>Number.isFinite(v));
+      if(vals.length){
+        const mean=vals.reduce((x:number,y:number)=>x+y,0)/vals.length;
+        summary[k]=mean;
+        stdDev[k]=Math.sqrt(vals.reduce((acc:number,v:number)=>acc+Math.pow(v-mean,2),0)/vals.length);
+      }else{
+        summary[k]=null;
+        stdDev[k]=null;
+      }
+    }
+
+    // FVC is derived from annual mean NDVI using robust temporal percentiles.
+    const ndviVals=validRows.map((r:any)=>Number(r.NDVI)).filter((v:number)=>Number.isFinite(v)).sort((x:number,y:number)=>x-y);
+    const q=(arr:number[],p:number)=>{
+      if(!arr.length) return NaN;
+      const i=(arr.length-1)*p;
+      const lo=Math.floor(i), hi=Math.ceil(i);
+      return lo===hi?arr[lo]:arr[lo]+(arr[hi]-arr[lo])*(i-lo);
+    };
+    const p5=q(ndviVals,0.05), p95=q(ndviVals,0.95);
+    if(Number.isFinite(summary.NDVI)&&Number.isFinite(p5)&&Number.isFinite(p95)&&p95>p5){
+      summary.FVC=Math.max(0,Math.min(1,Math.pow((summary.NDVI-p5)/(p95-p5),2)));
+    }else{
+      summary.FVC=null;
+    }
+    stdDev.FVC=null;
+
+    // Static terrain variables are evaluated separately.
+    const elev=ee.Image('USGS/SRTMGL1_003').select('elevation').rename('Elevation');
+    const slope=ee.Terrain.slope(elev).rename('Slope');
+    const terrain=ee.Image.cat([elev,slope]).reduceRegion({
+      reducer:ee.Reducer.mean(),
+      geometry:geom,
+      scale:90,
+      maxPixels:1e8,
+      bestEffort:true,
+      tileScale:8
+    });
+
+    // CHIRPS is already coarse-resolution; calculate annual rainfall at 5 km.
+    const rainYears=ee.FeatureCollection(yearList.map((y:any)=>{
+      y=ee.Number(y);
+      const ys=ee.Date.fromYMD(y,1,1);
+      const ye=ys.advance(1,'year');
+      const rain=ee.ImageCollection('UCSB-CHG/CHIRPS/DAILY')
+        .filterDate(ys,ye).filterBounds(geom).sum().rename('Rainfall');
+      const val=rain.reduceRegion({
+        reducer:ee.Reducer.mean(),
+        geometry:geom,
+        scale:5000,
+        maxPixels:1e7,
+        bestEffort:true,
+        tileScale:4
+      }).get('Rainfall');
+      return ee.Feature(null,{year:y,Rainfall:val});
+    }));
+
+    const [area,terrainInfo,rainInfo]=await Promise.all([
+      evaluate(areaHa),
+      evaluate(terrain),
+      evaluate(rainYears)
     ]);
+
+    summary.Elevation=terrainInfo?.Elevation??null;
+    summary.Slope=terrainInfo?.Slope??null;
+    const rainVals=(rainInfo?.features||[]).map((f:any)=>Number(f.properties?.Rainfall)).filter((v:number)=>Number.isFinite(v));
+    summary.Rainfall=rainVals.length?rainVals.reduce((x:number,y:number)=>x+y,0)/rainVals.length:null;
+    stdDev.Elevation=null;
+    stdDev.Slope=null;
+    stdDev.Rainfall=null;
 
     return NextResponse.json({
       status:'success',
@@ -189,12 +249,12 @@ export async function POST(req:NextRequest){
       sceneCount:count,
       summary:meanValues,
       stdDev:stdValues,
-      annualNDVI:(annualInfo?.features||[]).map((f:any)=>f.properties),
+      annualNDVI:validRows.map((r:any)=>({year:r.year,NDVI:r.NDVI??null,sceneCount:r.sceneCount})),
       notes:{
         reclamationAge:'NA — requires a reclamation-year layer or user-supplied attribute.',
-        fvc:'Derived from AOI-specific NDVI 5th and 95th percentiles.',
+        fvc:'Derived from the temporal 5th and 95th percentiles of annual AOI-mean NDVI.',
         rainfall:'Mean annual CHIRPS rainfall across the selected period.',
-        spatialScale:'30 m nominal for Landsat-derived summaries.'
+        spatialScale:'Annual Landsat composites summarized at 60 m for memory-safe AOI statistics; terrain at 90 m; rainfall at 5 km.'
       }
     });
   }catch(err:any){
