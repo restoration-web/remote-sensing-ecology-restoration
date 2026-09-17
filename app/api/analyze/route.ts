@@ -7,22 +7,32 @@ const ee=require('@google/earthengine');
 
 function initEarthEngine(){
   return new Promise<void>((resolve,reject)=>{
-    const project=process.env.GEE_PROJECT_ID;
-    const serviceAccount=process.env.GEE_SERVICE_ACCOUNT;
+    const envProject=process.env.GEE_PROJECT_ID;
+    const envServiceAccount=process.env.GEE_SERVICE_ACCOUNT;
     const rawKey=process.env.GEE_PRIVATE_KEY;
-    if(!project||!serviceAccount||!rawKey){
-      reject(new Error('Missing GEE credentials. Add GEE_PROJECT_ID, GEE_SERVICE_ACCOUNT, and GEE_PRIVATE_KEY in Vercel Environment Variables.'));
+    if(!rawKey){
+      reject(new Error('Missing GEE_PRIVATE_KEY in Vercel Environment Variables.'));
       return;
     }
     let key:any;
+    let project=envProject;
     try{
-      key=rawKey.trim().startsWith('{')
-        ? JSON.parse(rawKey)
-        : {type:'service_account',client_email:serviceAccount,private_key:rawKey.replace(/\\n/g,'\n')};
-      if(!key.client_email) key.client_email=serviceAccount;
-      if(key.private_key) key.private_key=String(key.private_key).replace(/\\n/g,'\n');
-    }catch(err){
-      reject(new Error('GEE_PRIVATE_KEY could not be parsed. Use the complete service-account JSON or the PEM private key.'));
+      if(rawKey.trim().startsWith('{')){
+        key=JSON.parse(rawKey);
+        project=key.project_id||envProject;
+      }else{
+        if(!envProject||!envServiceAccount){
+          throw new Error('GEE_PROJECT_ID and GEE_SERVICE_ACCOUNT are required when GEE_PRIVATE_KEY contains only the PEM key.');
+        }
+        key={type:'service_account',client_email:envServiceAccount,private_key:rawKey.replace(/\\n/g,'\n')};
+      }
+      if(!key.client_email && envServiceAccount) key.client_email=envServiceAccount;
+      if(key.private_key) key.private_key=String(key.private_key).replace(/\\n/g,'\n').trim();
+      if(!project) throw new Error('Earth Engine project ID is missing.');
+      if(!key.client_email) throw new Error('Service account email is missing.');
+      if(!String(key.private_key||'').includes('BEGIN PRIVATE KEY')) throw new Error('Private key PEM header is missing.');
+    }catch(err:any){
+      reject(new Error('GEE credentials could not be parsed: '+(err?.message||String(err))));
       return;
     }
     ee.data.authenticateViaPrivateKey(
@@ -46,11 +56,13 @@ function aoiFromGeoJSON(fc:any){
 
 function maskLandsat(img:any){
   const qa=img.select('QA_PIXEL');
-  const mask=qa.bitwiseAnd(1<<1).eq(0)
+  const mask=qa.bitwiseAnd(1<<0).eq(0)
+    .and(qa.bitwiseAnd(1<<1).eq(0))
     .and(qa.bitwiseAnd(1<<3).eq(0))
     .and(qa.bitwiseAnd(1<<4).eq(0))
     .and(qa.bitwiseAnd(1<<5).eq(0));
-  return img.updateMask(mask);
+  const saturation=img.select('QA_RADSAT').eq(0);
+  return img.updateMask(mask).updateMask(saturation);
 }
 
 function prepL57(img:any){
@@ -101,13 +113,32 @@ function landsatCollection(start:string,end:string,aoi:any){
 export async function POST(req:NextRequest){
   try{
     const payload=await req.json();
-    if(!payload?.aoi){
-      return NextResponse.json({status:'AOI required',note:'Upload SHP/GeoJSON before running analysis.'},{status:400});
+    if(!payload?.aoi || payload.aoi?.type!=='FeatureCollection' || !Array.isArray(payload.aoi?.features) || payload.aoi.features.length===0){
+      return NextResponse.json({status:'AOI required',note:'Upload a non-empty Shapefile/GeoJSON FeatureCollection before running analysis.'},{status:400});
     }
+
+    const requestedSensor=String(payload?.sensor||'Landsat 5/7/8/9');
+    if(requestedSensor!=='Landsat 5/7/8/9'){
+      return NextResponse.json({
+        status:'unsupported-sensor',
+        note:'The current reproducible backend is implemented for Landsat 5/7/8/9 only. Sentinel-2 harmonization has not yet been implemented, so the backend will not silently substitute Landsat.'
+      },{status:400});
+    }
+
+    const rawStart=Number(payload?.period?.start);
+    const rawEnd=Number(payload?.period?.end);
+    const currentYear=new Date().getUTCFullYear();
+    if(!Number.isInteger(rawStart)||!Number.isInteger(rawEnd)||rawStart<1984||rawEnd>currentYear||rawStart>rawEnd){
+      return NextResponse.json({
+        status:'invalid-period',
+        note:`Use whole years between 1984 and ${currentYear}, with start year less than or equal to end year.`
+      },{status:400});
+    }
+
     await initEarthEngine();
 
-    const startYear=Math.max(1984,Number(payload?.period?.start||2000));
-    const endYear=Math.min(new Date().getUTCFullYear()+1,Number(payload?.period?.end||2026));
+    const startYear=rawStart;
+    const endYear=rawEnd;
     const start=`${startYear}-01-01`;
     const end=`${endYear+1}-01-01`;
     const aoi=aoiFromGeoJSON(payload.aoi);
@@ -241,6 +272,7 @@ export async function POST(req:NextRequest){
     return NextResponse.json({
       status:'success',
       engine:'Google Earth Engine',
+      sensor:'Landsat 5/7/8/9 Collection 2 Level 2',
       analysisExtent:'uploaded-aoi-only',
       aoiName:payload.aoiName||'AOI',
       areaHa:area,
@@ -251,15 +283,17 @@ export async function POST(req:NextRequest){
       annualNDVI:validRows.map((r:any)=>({year:r.year,NDVI:r.NDVI??null,sceneCount:r.sceneCount})),
       notes:{
         reclamationAge:'NA — requires a reclamation-year layer or user-supplied attribute.',
-        fvc:'Derived from the temporal 5th and 95th percentiles of annual AOI-mean NDVI.',
+        fvc:'Temporal NDVI-normalized FVC proxy derived from the 5th and 95th percentiles of annual AOI-mean NDVI; do not interpret as pixel-level fractional vegetation cover until a publication-specific FVC calibration is declared.',
         rainfall:'Mean annual CHIRPS rainfall across the selected period.',
         spatialScale:'Annual Landsat composites summarized at 60 m for memory-safe AOI statistics; terrain at 90 m; rainfall at 5 km.'
       }
     });
   }catch(err:any){
+    const message=err?.message||String(err);
     return NextResponse.json({
       status:'error',
-      note:err?.message||String(err)
+      note:message,
+      stage:'earth-engine-analysis'
     },{status:500});
   }
 }
