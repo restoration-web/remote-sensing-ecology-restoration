@@ -14,7 +14,8 @@
     "leaflet": "1.9.4",
     "html-to-image": "1.11.13",
     "jspdf": "2.5.2",
-    "docx": "9.5.1"
+    "docx": "9.5.1",
+    "shpjs": "6.2.0"
   },
   "devDependencies": {
     "typescript": "5.9.2",
