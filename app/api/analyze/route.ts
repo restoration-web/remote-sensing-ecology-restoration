@@ -188,17 +188,19 @@ export async function POST(req:NextRequest){
 
     const annualInfo=await evaluate(annual);
     const rows=(annualInfo?.features||[]).map((f:any)=>f.properties||{});
-    const validRows=rows.filter((r:any)=>Number(r.sceneCount||0)>0);
+    const hasFinite=(v:any)=>v!==null && v!==undefined && v!=='' && Number.isFinite(Number(v));
+    const sceneRows=rows.filter((r:any)=>Number(r.sceneCount||0)>0);
+    const validRows=sceneRows.filter((r:any)=>hasFinite(r.NDVI));
 
     if(!validRows.length){
-      return NextResponse.json({status:'no-data',note:'No usable Landsat observations remained after masking.'},{status:422});
+      return NextResponse.json({status:'no-data',note:'Landsat scenes were found, but no valid NDVI observations remained inside the AOI after QA masking.'},{status:422});
     }
 
     const keys=['NDVI','EVI','SAVI','NDMI','NDWI','BSI','LST'];
     const summary:any={};
     const stdDev:any={};
     for(const k of keys){
-      const vals=validRows.map((r:any)=>Number(r[k])).filter((v:number)=>Number.isFinite(v));
+      const vals=validRows.filter((r:any)=>hasFinite(r[k])).map((r:any)=>Number(r[k]));
       if(vals.length){
         const mean=vals.reduce((x:number,y:number)=>x+y,0)/vals.length;
         summary[k]=mean;
@@ -210,7 +212,7 @@ export async function POST(req:NextRequest){
     }
 
     // FVC is derived from annual mean NDVI using robust temporal percentiles.
-    const ndviVals=validRows.map((r:any)=>Number(r.NDVI)).filter((v:number)=>Number.isFinite(v)).sort((x:number,y:number)=>x-y);
+    const ndviVals=validRows.filter((r:any)=>hasFinite(r.NDVI)).map((r:any)=>Number(r.NDVI)).sort((x:number,y:number)=>x-y);
     const q=(arr:number[],p:number)=>{
       if(!arr.length) return NaN;
       const i=(arr.length-1)*p;
@@ -263,7 +265,7 @@ export async function POST(req:NextRequest){
 
     summary.Elevation=terrainInfo?.Elevation??null;
     summary.Slope=terrainInfo?.Slope??null;
-    const rainVals=(rainInfo?.features||[]).map((f:any)=>Number(f.properties?.Rainfall)).filter((v:number)=>Number.isFinite(v));
+    const rainVals=(rainInfo?.features||[]).map((f:any)=>f.properties?.Rainfall).filter((v:any)=>hasFinite(v)).map((v:any)=>Number(v));
     summary.Rainfall=rainVals.length?rainVals.reduce((x:number,y:number)=>x+y,0)/rainVals.length:null;
     stdDev.Elevation=null;
     stdDev.Slope=null;
@@ -280,7 +282,7 @@ export async function POST(req:NextRequest){
       sceneCount:count,
       summary:summary,
       stdDev:stdDev,
-      annualNDVI:validRows.map((r:any)=>({year:r.year,NDVI:r.NDVI??null,sceneCount:r.sceneCount})),
+      annualNDVI:sceneRows.map((r:any)=>({year:r.year,NDVI:hasFinite(r.NDVI)?Number(r.NDVI):null,sceneCount:Number(r.sceneCount||0)})),
       notes:{
         reclamationAge:'NA — requires a reclamation-year layer or user-supplied attribute.',
         fvc:'Temporal NDVI-normalized FVC proxy derived from the 5th and 95th percentiles of annual AOI-mean NDVI; do not interpret as pixel-level fractional vegetation cover until a publication-specific FVC calibration is declared.',
