@@ -12,6 +12,8 @@ type AnalysisResult = {
   summary?: Record<string, number | null>;
   stdDev?: Record<string, number | null>;
   annualNDVI?: Array<{year:number; NDVI:number | null; sceneCount:number}>;
+  annualStats?: Array<Record<string, number | null>>;
+  annualRainfall?: Array<{year:number; Rainfall:number | null}>;
 };
 
 type AoiInfo = {
@@ -40,45 +42,142 @@ export default function Home(){
       setResult({status:'AOI required',note:'Upload a Shapefile/GeoJSON first. Analysis is restricted to the uploaded AOI boundary.'});
       return;
     }
+
+    const startYear=Number(period.start);
+    const endYear=Number(period.end);
+    const currentYear=new Date().getUTCFullYear();
+    if(!Number.isInteger(startYear)||!Number.isInteger(endYear)||startYear<1984||endYear>currentYear||startYear>endYear){
+      setResult({status:'invalid-period',note:`Use whole years between 1984 and ${currentYear}, with start year less than or equal to end year.`});
+      return;
+    }
+
     setRunning(true);
     setResult(null);
+
     try{
-      const res=await fetch('/api/analyze',{
-        method:'POST',
-        headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({
-          period,
-          sensor,
-          variables,
-          aoi:aoi.geometry,
-          aoiName:aoi.name,
-          clipToAoi:true,
-          analysisExtent:'uploaded-aoi-only'
-        })
-      });
-
-      const raw=await res.text();
-      let data:any;
-      try{
-        data=raw?JSON.parse(raw):{};
-      }catch{
-        throw new Error(`API returned HTTP ${res.status} with a non-JSON response: ${raw.slice(0,240)||'empty response'}`);
+      const batchSize=4;
+      const batches:Array<{start:number;end:number}>=[];
+      for(let y=startYear;y<=endYear;y+=batchSize){
+        batches.push({start:y,end:Math.min(y+batchSize-1,endYear)});
       }
 
-      if(!res.ok){
+      const batchResults:any[]=[];
+      for(let i=0;i<batches.length;i++){
+        const batch=batches[i];
         setResult({
-          status:data?.status||`HTTP ${res.status}`,
-          note:data?.note||data?.message||`Analysis request failed with HTTP ${res.status}.`,
-          stage:data?.stage
+          status:'running',
+          note:`Processing batch ${i+1}/${batches.length}: ${batch.start}–${batch.end}`,
+          stage:'earth-engine-batch'
         });
-        return;
+
+        const res=await fetch('/api/analyze',{
+          method:'POST',
+          headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({
+            period:{start:String(batch.start),end:String(batch.end)},
+            sensor,
+            variables,
+            aoi:aoi.geometry,
+            aoiName:aoi.name,
+            clipToAoi:true,
+            analysisExtent:'uploaded-aoi-only'
+          })
+        });
+
+        const raw=await res.text();
+        let data:any;
+        try{
+          data=raw?JSON.parse(raw):{};
+        }catch{
+          throw new Error(`Batch ${batch.start}–${batch.end} returned HTTP ${res.status} with a non-JSON response: ${raw.slice(0,240)||'empty response'}`);
+        }
+
+        if(!res.ok){
+          throw new Error(data?.note||data?.message||`Batch ${batch.start}–${batch.end} failed with HTTP ${res.status}.`);
+        }
+        if(data?.status!=='success'){
+          throw new Error(data?.note||`Batch ${batch.start}–${batch.end} did not return success.`);
+        }
+        batchResults.push(data);
       }
-      setResult(data);
+
+      const annualStats=batchResults
+        .flatMap(x=>Array.isArray(x.annualStats)?x.annualStats:[])
+        .sort((a:any,b:any)=>Number(a.year)-Number(b.year));
+
+      const annualRainfall=batchResults
+        .flatMap(x=>Array.isArray(x.annualRainfall)?x.annualRainfall:[])
+        .sort((a:any,b:any)=>Number(a.year)-Number(b.year));
+
+      const hasFinite=(v:any)=>v!==null&&v!==undefined&&v!==''&&Number.isFinite(Number(v));
+      const keys=['NDVI','EVI','SAVI','NDMI','NDWI','BSI','LST'];
+      const summary:any={};
+      const stdDev:any={};
+
+      for(const k of keys){
+        const vals=annualStats.filter((r:any)=>hasFinite(r[k])).map((r:any)=>Number(r[k]));
+        if(vals.length){
+          const mean=vals.reduce((a:number,b:number)=>a+b,0)/vals.length;
+          summary[k]=mean;
+          stdDev[k]=Math.sqrt(vals.reduce((acc:number,v:number)=>acc+Math.pow(v-mean,2),0)/vals.length);
+        }else{
+          summary[k]=null;
+          stdDev[k]=null;
+        }
+      }
+
+      const ndviVals=annualStats.filter((r:any)=>hasFinite(r.NDVI)).map((r:any)=>Number(r.NDVI)).sort((a:number,b:number)=>a-b);
+      const q=(arr:number[],p:number)=>{
+        if(!arr.length) return NaN;
+        const idx=(arr.length-1)*p;
+        const lo=Math.floor(idx), hi=Math.ceil(idx);
+        return lo===hi?arr[lo]:arr[lo]+(arr[hi]-arr[lo])*(idx-lo);
+      };
+      const p5=q(ndviVals,0.05);
+      const p95=q(ndviVals,0.95);
+      summary.FVC=Number.isFinite(summary.NDVI)&&Number.isFinite(p5)&&Number.isFinite(p95)&&p95>p5
+        ? Math.max(0,Math.min(1,Math.pow((summary.NDVI-p5)/(p95-p5),2)))
+        : null;
+      stdDev.FVC=null;
+
+      const rainVals=annualRainfall.filter((r:any)=>hasFinite(r.Rainfall)).map((r:any)=>Number(r.Rainfall));
+      summary.Rainfall=rainVals.length?rainVals.reduce((a:number,b:number)=>a+b,0)/rainVals.length:null;
+      stdDev.Rainfall=null;
+
+      const first=batchResults[0]||{};
+      const terrainKeys=['Elevation','Slope'];
+      for(const k of terrainKeys){
+        const vals=batchResults.map(x=>x?.summary?.[k]).filter((v:any)=>hasFinite(v)).map((v:any)=>Number(v));
+        summary[k]=vals.length?vals.reduce((a:number,b:number)=>a+b,0)/vals.length:null;
+        stdDev[k]=null;
+      }
+
+      const sceneCount=batchResults.reduce((acc:number,x:any)=>acc+Number(x?.sceneCount||0),0);
+      const areaVals=batchResults.map(x=>x?.areaHa).filter((v:any)=>hasFinite(v)).map((v:any)=>Number(v));
+      const areaHa=areaVals.length?areaVals[0]:null;
+
+      setResult({
+        status:'success',
+        note:`Completed ${batches.length} Earth Engine batches for ${startYear}–${endYear}.`,
+        stage:'merged-client-result',
+        areaHa:areaHa??undefined,
+        sceneCount,
+        period:{start:startYear,end:endYear},
+        summary,
+        stdDev,
+        annualStats,
+        annualRainfall,
+        annualNDVI:annualStats.map((r:any)=>({
+          year:Number(r.year),
+          NDVI:hasFinite(r.NDVI)?Number(r.NDVI):null,
+          sceneCount:Number(r.sceneCount||0)
+        }))
+      });
     }catch(e:any){
       setResult({
-        status:'network-or-runtime-error',
+        status:'error',
         note:e?.message||String(e),
-        stage:'frontend-fetch'
+        stage:'batch-or-merge'
       });
     }finally{
       setRunning(false);
