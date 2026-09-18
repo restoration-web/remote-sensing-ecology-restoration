@@ -1,7 +1,7 @@
 import {NextRequest,NextResponse} from 'next/server';
 
 export const runtime='nodejs';
-export const maxDuration=60;
+export const maxDuration=300;
 
 const ee=require('@google/earthengine');
 
@@ -265,7 +265,11 @@ export async function POST(req:NextRequest){
 
     summary.Elevation=terrainInfo?.Elevation??null;
     summary.Slope=terrainInfo?.Slope??null;
-    const rainVals=(rainInfo?.features||[]).map((f:any)=>f.properties?.Rainfall).filter((v:any)=>hasFinite(v)).map((v:any)=>Number(v));
+    const annualRainfall=(rainInfo?.features||[]).map((f:any)=>({
+      year:Number(f.properties?.year),
+      Rainfall:hasFinite(f.properties?.Rainfall)?Number(f.properties.Rainfall):null
+    }));
+    const rainVals=annualRainfall.map((r:any)=>r.Rainfall).filter((v:any)=>hasFinite(v)).map((v:any)=>Number(v));
     summary.Rainfall=rainVals.length?rainVals.reduce((x:number,y:number)=>x+y,0)/rainVals.length:null;
     stdDev.Elevation=null;
     stdDev.Slope=null;
@@ -282,7 +286,19 @@ export async function POST(req:NextRequest){
       sceneCount:count,
       summary:summary,
       stdDev:stdDev,
-      annualNDVI:sceneRows.map((r:any)=>({year:r.year,NDVI:hasFinite(r.NDVI)?Number(r.NDVI):null,sceneCount:Number(r.sceneCount||0)})),
+      annualStats:sceneRows.map((r:any)=>({
+        year:Number(r.year),
+        sceneCount:Number(r.sceneCount||0),
+        NDVI:hasFinite(r.NDVI)?Number(r.NDVI):null,
+        EVI:hasFinite(r.EVI)?Number(r.EVI):null,
+        SAVI:hasFinite(r.SAVI)?Number(r.SAVI):null,
+        NDMI:hasFinite(r.NDMI)?Number(r.NDMI):null,
+        NDWI:hasFinite(r.NDWI)?Number(r.NDWI):null,
+        BSI:hasFinite(r.BSI)?Number(r.BSI):null,
+        LST:hasFinite(r.LST)?Number(r.LST):null
+      })),
+      annualRainfall,
+      annualNDVI:sceneRows.map((r:any)=>({year:Number(r.year),NDVI:hasFinite(r.NDVI)?Number(r.NDVI):null,sceneCount:Number(r.sceneCount||0)})),
       notes:{
         reclamationAge:'NA — requires a reclamation-year layer or user-supplied attribute.',
         fvc:'Temporal NDVI-normalized FVC proxy derived from the 5th and 95th percentiles of annual AOI-mean NDVI; do not interpret as pixel-level fractional vegetation cover until a publication-specific FVC calibration is declared.',
