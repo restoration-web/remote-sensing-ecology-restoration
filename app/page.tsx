@@ -202,17 +202,28 @@ export default function Home(){
 function Metric({label,value}:{label:string,value:string}){return <div className="metric"><span>{label}</span><b>{value}</b></div>}
 
 function AnalysisWorkspace({tab,period,setPeriod,sensor,setSensor,result,aoi,setAoi,runAnalysis,running}:any){
+  if(tab!=='Map & AOI'){
+    return <div className="moduleShell">
+      <section className="card moduleIntro">
+        <div><h3>{tab}</h3><p>{moduleText(tab)}</p></div>
+        <button onClick={runAnalysis} disabled={running}>{running?'Running…':`Refresh ${tab}`}</button>
+      </section>
+      {result&&<div className="statusbox"><b>Backend status:</b> {result.status}{result.stage?<> • <b>Stage:</b> {result.stage}</>:null}<br/><span>{result.note||'Request completed.'}</span></div>}
+      {result?.status==='success'?<ModuleDashboard tab={tab} result={result}/>:<div className="card emptyState">Run the analysis first to populate this module with real Earth Engine results.</div>}
+    </div>
+  }
+
   return <div className="grid">
     <section className="card"><AoiMap aoi={aoi}/></section>
     <aside className="card"><div className="form">
-      {tab==='Map & AOI'&&<AoiUploader aoi={aoi} setAoi={setAoi}/>}
+      <AoiUploader aoi={aoi} setAoi={setAoi}/>
       <div className="field"><label>Analysis period</label><div className="twocol"><input value={period.start} onChange={e=>setPeriod({...period,start:e.target.value})}/><input value={period.end} onChange={e=>setPeriod({...period,end:e.target.value})}/></div></div>
       <div className="field"><label>Satellite</label><select value={sensor} onChange={e=>setSensor(e.target.value)}><option>Landsat 5/7/8/9</option><option disabled>Sentinel-2 — harmonization pending</option><option disabled>Landsat + Sentinel-2 — harmonization pending</option></select><div className="hint">Current reproducible backend uses Landsat Collection 2 Level 2 only. Sentinel-2 will be enabled after a declared harmonization method is implemented.</div></div>
       <div className="field"><label>Variables</label><div className="chips">{variables.map(x=><span className="chip" key={x}>{x}</span>)}</div></div>
       <div className="field"><label>Current module</label><div className="hint">{moduleText(tab)}</div></div>
       {result&&<div className="statusbox"><b>Backend status:</b> {result.status}{result.stage?<> • <b>Stage:</b> {result.stage}</>:null}<br/><span>{result.note||'Request completed.'}</span></div>}
       {result?.status==='success'&&<ResultSummary result={result}/>}
-      <button onClick={runAnalysis} disabled={running}>{running?'Running…':`Run ${tab}`}</button>
+      <button onClick={runAnalysis} disabled={running}>{running?'Running…':'Run Map & AOI'}</button>
     </div></aside>
   </div>
 }
@@ -228,6 +239,143 @@ function ResultSummary({result}:any){
       <div className="trendYears"><span>{result.period?.start}</span><span>{result.period?.end}</span></div>
     </div>}
   </div>
+}
+
+
+function ModuleDashboard({tab,result}:any){
+  const annual=mergeAnnual(result);
+  if(tab==='Ecological Indices') return <EcologicalIndicesDashboard result={result} annual={annual}/>;
+  if(tab==='Environmental Drivers') return <DriversDashboard result={result} annual={annual}/>;
+  if(tab==='Recovery Trajectory') return <RecoveryDashboard result={result} annual={annual}/>;
+  if(tab==='Statistics') return <StatisticsDashboard result={result} annual={annual}/>;
+  if(tab==='Validation') return <ValidationDashboard result={result} annual={annual}/>;
+  return <ResultSummary result={result}/>;
+}
+
+function mergeAnnual(result:any){
+  const rain=new Map((result?.annualRainfall||[]).map((r:any)=>[Number(r.year),r.Rainfall]));
+  return (result?.annualStats||[]).map((r:any)=>({...r,Rainfall:rain.get(Number(r.year))??null})).sort((a:any,b:any)=>Number(a.year)-Number(b.year));
+}
+
+function EcologicalIndicesDashboard({result,annual}:any){
+  return <div className="moduleGrid">
+    <section className="card span2"><h3>Vegetation recovery indices</h3><p className="muted">Annual AOI means from Landsat Collection 2 Level 2.</p><MultiLineChart rows={annual} keys={['NDVI','EVI','SAVI']} /></section>
+    <section className="card"><h3>Moisture & surface condition</h3><MultiLineChart rows={annual} keys={['NDMI','NDWI','BSI']} /></section>
+    <section className="card"><h3>Thermal trajectory</h3><MultiLineChart rows={annual} keys={['LST']} /></section>
+    <section className="card span2"><ResultSummary result={result}/></section>
+  </div>
+}
+
+function DriversDashboard({result,annual}:any){
+  return <div className="moduleGrid">
+    <section className="card span2"><h3>Annual rainfall</h3><p className="muted">CHIRPS mean annual rainfall over the AOI.</p><MultiLineChart rows={annual} keys={['Rainfall']} /></section>
+    <section className="card"><h3>Terrain</h3><div className="bigMetric">{fmt(result?.summary?.Elevation,2)} <small>m elevation</small></div><div className="bigMetric">{fmt(result?.summary?.Slope,2)} <small>° mean slope</small></div></section>
+    <section className="card"><h3>Reclamation age</h3><div className="naBox">NA</div><p className="muted">Requires a reclamation-year layer or user-supplied attribute. No value is inferred.</p></section>
+    <section className="card span2"><h3>Driver-response view</h3><ScatterPlot rows={annual} xKey="Rainfall" yKey="NDVI" xLabel="Rainfall (mm/year)" yLabel="NDVI"/></section>
+  </div>
+}
+
+function RecoveryDashboard({result,annual}:any){
+  const vars=['NDVI','EVI','SAVI','NDMI','BSI','LST'];
+  const stats=vars.map(k=>({variable:k,...trendStats(annual,k)}));
+  return <div className="moduleGrid">
+    <section className="card span2"><h3>Annual NDVI recovery trajectory</h3><MultiLineChart rows={annual} keys={['NDVI']} /></section>
+    <section className="card span2"><h3>Mann–Kendall & Sen’s slope</h3><div className="tableWrap"><table className="dataTable"><thead><tr><th>Variable</th><th>n</th><th>Sen slope/year</th><th>Kendall S</th><th>Z</th><th>p (approx.)</th></tr></thead><tbody>{stats.map((r:any)=><tr key={r.variable}><td>{r.variable}</td><td>{r.n}</td><td>{fmt(r.sen,5)}</td><td>{r.S}</td><td>{fmt(r.z,3)}</td><td>{fmt(r.p,4)}</td></tr>)}</tbody></table></div></section>
+  </div>
+}
+
+function StatisticsDashboard({result,annual}:any){
+  const statKeys=['NDVI','EVI','SAVI','NDMI','NDWI','BSI','LST','Rainfall'];
+  const desc=statKeys.map(k=>({k,...describe(annual,k)}));
+  const corrKeys=['NDVI','NDMI','BSI','LST','Rainfall'];
+  const reg=multipleRegression(annual,'NDVI',['NDMI','BSI','LST','Rainfall']);
+  const pca=pca2(annual,['NDVI','EVI','SAVI','NDMI','NDWI','BSI','LST','Rainfall']);
+  return <div className="moduleGrid">
+    <section className="card span2"><h3>Descriptive statistics</h3><div className="tableWrap"><table className="dataTable"><thead><tr><th>Variable</th><th>n</th><th>Mean</th><th>SD</th><th>Min</th><th>Max</th></tr></thead><tbody>{desc.map((r:any)=><tr key={r.k}><td>{r.k}</td><td>{r.n}</td><td>{fmt(r.mean,3)}</td><td>{fmt(r.sd,3)}</td><td>{fmt(r.min,3)}</td><td>{fmt(r.max,3)}</td></tr>)}</tbody></table></div></section>
+    <section className="card span2"><h3>Pearson correlation matrix</h3><CorrelationMatrix rows={annual} keys={corrKeys}/></section>
+    <section className="card"><h3>NDVI vs LST</h3><ScatterPlot rows={annual} xKey="LST" yKey="NDVI" xLabel="LST (°C)" yLabel="NDVI"/></section>
+    <section className="card"><h3>NDVI vs NDMI</h3><ScatterPlot rows={annual} xKey="NDMI" yKey="NDVI" xLabel="NDMI" yLabel="NDVI"/></section>
+    <section className="card span2"><h3>Multiple regression</h3><p className="muted">Response: annual NDVI; predictors: NDMI, BSI, LST and rainfall. This is a temporal AOI-mean model, not a pixel-level spatial regression.</p>{reg.ok?<><div className="metricStrip"><span>R² <b>{fmt(reg.r2,3)}</b></span><span>RMSE <b>{fmt(reg.rmse,4)}</b></span><span>MAE <b>{fmt(reg.mae,4)}</b></span><span>n <b>{reg.n}</b></span></div><div className="tableWrap"><table className="dataTable"><thead><tr><th>Term</th><th>Coefficient</th></tr></thead><tbody>{reg.coefs.map((x:any)=><tr key={x.term}><td>{x.term}</td><td>{fmt(x.value,6)}</td></tr>)}</tbody></table></div></>:<div className="naBox">Regression unavailable: {reg.note}</div>}</section>
+    <section className="card span2"><h3>PCA (standardized annual observations)</h3>{pca.ok?<><div className="metricStrip"><span>PC1 variance <b>{fmt(pca.pc1Pct,1)}%</b></span><span>PC2 variance <b>{fmt(pca.pc2Pct,1)}%</b></span><span>n <b>{pca.n}</b></span></div><div className="tableWrap"><table className="dataTable"><thead><tr><th>Variable</th><th>PC1 loading</th><th>PC2 loading</th></tr></thead><tbody>{pca.loadings.map((x:any)=><tr key={x.variable}><td>{x.variable}</td><td>{fmt(x.pc1,3)}</td><td>{fmt(x.pc2,3)}</td></tr>)}</tbody></table></div></>:<div className="naBox">PCA unavailable: {pca.note}</div>}</section>
+  </div>
+}
+
+function ValidationDashboard({result,annual}:any){
+  const hold=temporalHoldout(annual);
+  const validYears=annual.filter((r:any)=>finite(r.NDVI)).length;
+  const totalYears=annual.length;
+  return <div className="moduleGrid">
+    <section className="card"><h3>Data completeness</h3><div className="bigMetric">{validYears}/{totalYears} <small>years with valid NDVI</small></div><div className="bigMetric">{result?.sceneCount||0} <small>Landsat scenes</small></div></section>
+    <section className="card"><h3>Cross-sensor validation</h3><div className="naBox">Pending</div><p className="muted">Sentinel-2 harmonization is not yet implemented; no cross-sensor metric is fabricated.</p></section>
+    <section className="card span2"><h3>Temporal holdout diagnostic</h3><p className="muted">First 80% of valid annual NDVI observations fit a linear year trend; final 20% are held out. This is an internal temporal diagnostic, not independent field validation.</p>{hold.ok?<div className="metricStrip"><span>R² <b>{fmt(hold.r2,3)}</b></span><span>RMSE <b>{fmt(hold.rmse,4)}</b></span><span>MAE <b>{fmt(hold.mae,4)}</b></span><span>Bias <b>{fmt(hold.bias,4)}</b></span></div>:<div className="naBox">{hold.note}</div>}</section>
+    <section className="card span2"><h3>Reference ecosystem validation</h3><div className="naBox">Needs reference AOI</div><p className="muted">A reference ecosystem boundary or field plots must be supplied before calculating recovery distance or project-level validation claims.</p></section>
+  </div>
+}
+
+function MultiLineChart({rows,keys}:{rows:any[];keys:string[]}){
+  const data=rows.filter(r=>keys.some(k=>finite(r[k])));
+  if(!data.length) return <div className="naBox">No annual observations available.</div>;
+  const W=760,H=260,p=38;
+  const vals=data.flatMap(r=>keys.map(k=>Number(r[k])).filter(Number.isFinite));
+  let min=Math.min(...vals),max=Math.max(...vals); if(min===max){min-=1;max+=1}
+  const x=(i:number)=>p+(i/(Math.max(1,data.length-1)))*(W-2*p);
+  const y=(v:number)=>H-p-((v-min)/(max-min))*(H-2*p);
+  return <div className="svgWrap"><svg viewBox={`0 0 ${W} ${H}`} role="img">
+    <line x1={p} y1={H-p} x2={W-p} y2={H-p} className="axisLine"/><line x1={p} y1={p} x2={p} y2={H-p} className="axisLine"/>
+    {[0,.25,.5,.75,1].map(t=><g key={t}><line x1={p} y1={p+t*(H-2*p)} x2={W-p} y2={p+t*(H-2*p)} className="gridSvg"/><text x={5} y={p+t*(H-2*p)+4} className="svgText">{fmt(max-t*(max-min),2)}</text></g>)}
+    {keys.map((k,ki)=>{const pts=data.map((r,i)=>finite(r[k])?`${x(i)},${y(Number(r[k]))}`:null).filter(Boolean).join(' ');return <polyline key={k} points={pts} className={`seriesLine s${ki%6}`} fill="none"/>})}
+    <text x={p} y={H-8} className="svgText">{data[0]?.year}</text><text x={W-p-30} y={H-8} className="svgText">{data[data.length-1]?.year}</text>
+  </svg><div className="chartLegend">{keys.map((k,i)=><span key={k}><i className={`legendDot s${i%6}`}></i>{k}</span>)}</div></div>
+}
+
+function ScatterPlot({rows,xKey,yKey,xLabel,yLabel}:any){
+  const pts=rows.filter((r:any)=>finite(r[xKey])&&finite(r[yKey])).map((r:any)=>({x:Number(r[xKey]),y:Number(r[yKey]),year:r.year}));
+  if(pts.length<3) return <div className="naBox">Insufficient paired observations.</div>;
+  const W=520,H=260,p=40; const xs=pts.map(x=>x.x),ys=pts.map(x=>x.y);
+  let xmin=Math.min(...xs),xmax=Math.max(...xs),ymin=Math.min(...ys),ymax=Math.max(...ys); if(xmin===xmax){xmin-=1;xmax+=1} if(ymin===ymax){ymin-=1;ymax+=1}
+  const X=(v:number)=>p+((v-xmin)/(xmax-xmin))*(W-2*p); const Y=(v:number)=>H-p-((v-ymin)/(ymax-ymin))*(H-2*p);
+  const rr=pearsonPairs(pts.map(o=>[o.x,o.y]));
+  return <div className="svgWrap"><svg viewBox={`0 0 ${W} ${H}`}><line x1={p} y1={H-p} x2={W-p} y2={H-p} className="axisLine"/><line x1={p} y1={p} x2={p} y2={H-p} className="axisLine"/>{pts.map((o,i)=><circle key={i} cx={X(o.x)} cy={Y(o.y)} r="4" className="scatterDot"><title>{o.year}: {xLabel}={fmt(o.x,3)}, {yLabel}={fmt(o.y,3)}</title></circle>)}<text x={W/2-40} y={H-7} className="svgText">{xLabel}</text><text x={8} y={18} className="svgText">{yLabel}</text></svg><div className="chartFooter">Pearson r = <b>{fmt(rr,3)}</b> • n = {pts.length}</div></div>
+}
+
+function CorrelationMatrix({rows,keys}:any){
+  return <div className="tableWrap"><table className="dataTable corrTable"><thead><tr><th></th>{keys.map((k:string)=><th key={k}>{k}</th>)}</tr></thead><tbody>{keys.map((a:string)=><tr key={a}><th>{a}</th>{keys.map((b:string)=><td key={b}>{fmt(correlation(rows,a,b),2)}</td>)}</tr>)}</tbody></table></div>
+}
+
+function finite(v:any){return v!==null&&v!==undefined&&v!==''&&Number.isFinite(Number(v))}
+function fmt(v:any,d=3){return finite(v)?Number(v).toFixed(d):'NA'}
+function values(rows:any[],k:string){return rows.filter(r=>finite(r[k])).map(r=>Number(r[k]))}
+function describe(rows:any[],k:string){const a=values(rows,k);if(!a.length)return{n:0,mean:null,sd:null,min:null,max:null};const mean=a.reduce((x,y)=>x+y,0)/a.length;const sd=Math.sqrt(a.reduce((s,v)=>s+(v-mean)**2,0)/Math.max(1,a.length-1));return{n:a.length,mean,sd,min:Math.min(...a),max:Math.max(...a)}}
+function pearsonPairs(pairs:number[][]){if(pairs.length<3)return null;const xs=pairs.map(p=>p[0]),ys=pairs.map(p=>p[1]);const mx=xs.reduce((a,b)=>a+b,0)/xs.length,my=ys.reduce((a,b)=>a+b,0)/ys.length;let num=0,dx=0,dy=0;for(let i=0;i<xs.length;i++){const a=xs[i]-mx,b=ys[i]-my;num+=a*b;dx+=a*a;dy+=b*b}return dx>0&&dy>0?num/Math.sqrt(dx*dy):null}
+function correlation(rows:any[],a:string,b:string){return pearsonPairs(rows.filter(r=>finite(r[a])&&finite(r[b])).map(r=>[Number(r[a]),Number(r[b])]))}
+
+function trendStats(rows:any[],k:string){
+  const pts=rows.filter(r=>finite(r[k])&&finite(r.year)).map(r=>({x:Number(r.year),y:Number(r[k])}));
+  const n=pts.length;if(n<3)return{n,S:null,z:null,p:null,sen:null};
+  let S=0;const slopes:number[]=[];for(let i=0;i<n-1;i++)for(let j=i+1;j<n;j++){S+=Math.sign(pts[j].y-pts[i].y);slopes.push((pts[j].y-pts[i].y)/(pts[j].x-pts[i].x))}
+  const variance=n*(n-1)*(2*n+5)/18;const z=S>0?(S-1)/Math.sqrt(variance):S<0?(S+1)/Math.sqrt(variance):0;const p=2*(1-normalCdf(Math.abs(z)));slopes.sort((a,b)=>a-b);const m=Math.floor(slopes.length/2);const sen=slopes.length%2?slopes[m]:(slopes[m-1]+slopes[m])/2;return{n,S,z,p,sen};
+}
+function normalCdf(x:number){return .5*(1+erf(x/Math.sqrt(2)))}
+function erf(x:number){const sign=x<0?-1:1;const a=Math.abs(x),t=1/(1+.3275911*a);const y=1-(((((1.061405429*t-1.453152027)*t)+1.421413741)*t-.284496736)*t+.254829592)*t*Math.exp(-a*a);return sign*y}
+
+function solve(A:number[][],b:number[]){const n=A.length;const M=A.map((r,i)=>[...r,b[i]]);for(let i=0;i<n;i++){let m=i;for(let j=i+1;j<n;j++)if(Math.abs(M[j][i])>Math.abs(M[m][i]))m=j;[M[i],M[m]]=[M[m],M[i]];if(Math.abs(M[i][i])<1e-10)return null;const d=M[i][i];for(let j=i;j<=n;j++)M[i][j]/=d;for(let r=0;r<n;r++)if(r!==i){const f=M[r][i];for(let j=i;j<=n;j++)M[r][j]-=f*M[i][j]}}return M.map(r=>r[n])}
+function multipleRegression(rows:any[],yKey:string,xKeys:string[]){
+  const clean=rows.filter(r=>finite(r[yKey])&&xKeys.every(k=>finite(r[k])));if(clean.length<xKeys.length+3)return{ok:false,n:clean.length,note:'insufficient complete annual observations'};
+  const X=clean.map(r=>[1,...xKeys.map(k=>Number(r[k]))]),y=clean.map(r=>Number(r[yKey]));const p=X[0].length;const XtX=Array.from({length:p},()=>Array(p).fill(0)),Xty=Array(p).fill(0);
+  for(let i=0;i<X.length;i++)for(let a=0;a<p;a++){Xty[a]+=X[i][a]*y[i];for(let b=0;b<p;b++)XtX[a][b]+=X[i][a]*X[i][b]}
+  const beta=solve(XtX,Xty);if(!beta)return{ok:false,n:clean.length,note:'singular predictor matrix'};
+  const pred=X.map(r=>r.reduce((s,v,j)=>s+v*beta[j],0)),mean=y.reduce((a,b)=>a+b,0)/y.length;const ssr=y.reduce((s,v,i)=>s+(v-pred[i])**2,0),sst=y.reduce((s,v)=>s+(v-mean)**2,0);return{ok:true,n:y.length,r2:sst>0?1-ssr/sst:null,rmse:Math.sqrt(ssr/y.length),mae:y.reduce((s,v,i)=>s+Math.abs(v-pred[i]),0)/y.length,coefs:[{term:'Intercept',value:beta[0]},...xKeys.map((k,i)=>({term:k,value:beta[i+1]}))]};
+}
+function temporalHoldout(rows:any[]){
+  const pts=rows.filter(r=>finite(r.year)&&finite(r.NDVI)).map(r=>({x:Number(r.year),y:Number(r.NDVI)}));if(pts.length<8)return{ok:false,note:'At least 8 valid annual observations are required.'};const cut=Math.max(3,Math.floor(pts.length*.8));const train=pts.slice(0,cut),test=pts.slice(cut);const mx=train.reduce((s,p)=>s+p.x,0)/train.length,my=train.reduce((s,p)=>s+p.y,0)/train.length;const den=train.reduce((s,p)=>s+(p.x-mx)**2,0);if(!den)return{ok:false,note:'Year variance is zero.'};const slope=train.reduce((s,p)=>s+(p.x-mx)*(p.y-my),0)/den,intercept=my-slope*mx;const pred=test.map(p=>intercept+slope*p.x),ys=test.map(p=>p.y),mean=ys.reduce((a,b)=>a+b,0)/ys.length;const sse=ys.reduce((s,v,i)=>s+(v-pred[i])**2,0),sst=ys.reduce((s,v)=>s+(v-mean)**2,0);return{ok:true,r2:sst>0?1-sse/sst:null,rmse:Math.sqrt(sse/ys.length),mae:ys.reduce((s,v,i)=>s+Math.abs(v-pred[i]),0)/ys.length,bias:ys.reduce((s,v,i)=>s+(pred[i]-v),0)/ys.length};
+}
+
+function pca2(rows:any[],keys:string[]){
+  const clean=rows.filter(r=>keys.every(k=>finite(r[k])));const n=clean.length,m=keys.length;if(n<Math.max(6,m))return{ok:false,n,note:'insufficient complete annual observations'};
+  const Z=clean.map(r=>keys.map(k=>Number(r[k])));for(let j=0;j<m;j++){const a=Z.map(r=>r[j]),mu=a.reduce((x,y)=>x+y,0)/n,sd=Math.sqrt(a.reduce((s,v)=>s+(v-mu)**2,0)/(n-1));if(sd===0)return{ok:false,n,note:`zero variance in ${keys[j]}`};for(let i=0;i<n;i++)Z[i][j]=(Z[i][j]-mu)/sd}
+  const C=Array.from({length:m},()=>Array(m).fill(0));for(let a=0;a<m;a++)for(let b=0;b<m;b++)C[a][b]=Z.reduce((s,r)=>s+r[a]*r[b],0)/(n-1);
+  const eig=(M:number[][],seed:number[])=>{let v=seed.slice();for(let it=0;it<100;it++){const w=M.map(r=>r.reduce((s,x,j)=>s+x*v[j],0));const norm=Math.sqrt(w.reduce((s,x)=>s+x*x,0))||1;v=w.map(x=>x/norm)}const Mv=M.map(r=>r.reduce((s,x,j)=>s+x*v[j],0));const val=v.reduce((s,x,i)=>s+x*Mv[i],0);return{v,val}};
+  const e1=eig(C,Array(m).fill(1));const D=C.map((r,i)=>r.map((x,j)=>x-e1.val*e1.v[i]*e1.v[j]));const e2=eig(D,Array.from({length:m},(_,i)=>i%2?1:-1));const total=C.reduce((s,r,i)=>s+r[i],0);return{ok:true,n,pc1Pct:100*e1.val/total,pc2Pct:100*e2.val/total,loadings:keys.map((k,i)=>({variable:k,pc1:e1.v[i],pc2:e2.v[i]}))};
 }
 
 function AoiMap({aoi}:any){
