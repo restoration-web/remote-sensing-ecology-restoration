@@ -144,7 +144,6 @@ export default function Home(){
       summary.Rainfall=rainVals.length?rainVals.reduce((a:number,b:number)=>a+b,0)/rainVals.length:null;
       stdDev.Rainfall=null;
 
-      const first=batchResults[0]||{};
       const terrainKeys=['Elevation','Slope'];
       for(const k of terrainKeys){
         const vals=batchResults.map(x=>x?.summary?.[k]).filter((v:any)=>hasFinite(v)).map((v:any)=>Number(v));
@@ -329,13 +328,13 @@ function MultiLineChart({rows,keys}:{rows:any[];keys:string[]}){
 }
 
 function ScatterPlot({rows,xKey,yKey,xLabel,yLabel}:any){
-  const pts=rows.filter((r:any)=>finite(r[xKey])&&finite(r[yKey])).map((r:any)=>({x:Number(r[xKey]),y:Number(r[yKey]),year:r.year}));
+  const pts:Array<{x:number;y:number;year:number|string}>=rows.filter((r:any)=>finite(r[xKey])&&finite(r[yKey])).map((r:any)=>({x:Number(r[xKey]),y:Number(r[yKey]),year:r.year}));
   if(pts.length<3) return <div className="naBox">Insufficient paired observations.</div>;
-  const W=520,H=260,p=40; const xs=pts.map(x=>x.x),ys=pts.map(x=>x.y);
+  const W=520,H=260,p=40; const xs:number[]=pts.map((pt:{x:number})=>pt.x),ys:number[]=pts.map((pt:{y:number})=>pt.y);
   let xmin=Math.min(...xs),xmax=Math.max(...xs),ymin=Math.min(...ys),ymax=Math.max(...ys); if(xmin===xmax){xmin-=1;xmax+=1} if(ymin===ymax){ymin-=1;ymax+=1}
   const X=(v:number)=>p+((v-xmin)/(xmax-xmin))*(W-2*p); const Y=(v:number)=>H-p-((v-ymin)/(ymax-ymin))*(H-2*p);
-  const rr=pearsonPairs(pts.map(o=>[o.x,o.y]));
-  return <div className="svgWrap"><svg viewBox={`0 0 ${W} ${H}`}><line x1={p} y1={H-p} x2={W-p} y2={H-p} className="axisLine"/><line x1={p} y1={p} x2={p} y2={H-p} className="axisLine"/>{pts.map((o,i)=><circle key={i} cx={X(o.x)} cy={Y(o.y)} r="4" className="scatterDot"><title>{o.year}: {xLabel}={fmt(o.x,3)}, {yLabel}={fmt(o.y,3)}</title></circle>)}<text x={W/2-40} y={H-7} className="svgText">{xLabel}</text><text x={8} y={18} className="svgText">{yLabel}</text></svg><div className="chartFooter">Pearson r = <b>{fmt(rr,3)}</b> • n = {pts.length}</div></div>
+  const rr=pearsonPairs(pts.map((pt:{x:number;y:number})=>[pt.x,pt.y]));
+  return <div className="svgWrap"><svg viewBox={`0 0 ${W} ${H}`}><line x1={p} y1={H-p} x2={W-p} y2={H-p} className="axisLine"/><line x1={p} y1={p} x2={p} y2={H-p} className="axisLine"/>{pts.map((pt:{x:number;y:number;year:number|string},i:number)=><circle key={i} cx={X(pt.x)} cy={Y(pt.y)} r="4" className="scatterDot"><title>{pt.year}: {xLabel}={fmt(pt.x,3)}, {yLabel}={fmt(pt.y,3)}</title></circle>)}<text x={W/2-40} y={H-7} className="svgText">{xLabel}</text><text x={8} y={18} className="svgText">{yLabel}</text></svg><div className="chartFooter">Pearson r = <b>{fmt(rr,3)}</b> • n = {pts.length}</div></div>
 }
 
 function CorrelationMatrix({rows,keys}:any){
@@ -360,22 +359,56 @@ function erf(x:number){const sign=x<0?-1:1;const a=Math.abs(x),t=1/(1+.3275911*a
 
 function solve(A:number[][],b:number[]){const n=A.length;const M=A.map((r,i)=>[...r,b[i]]);for(let i=0;i<n;i++){let m=i;for(let j=i+1;j<n;j++)if(Math.abs(M[j][i])>Math.abs(M[m][i]))m=j;[M[i],M[m]]=[M[m],M[i]];if(Math.abs(M[i][i])<1e-10)return null;const d=M[i][i];for(let j=i;j<=n;j++)M[i][j]/=d;for(let r=0;r<n;r++)if(r!==i){const f=M[r][i];for(let j=i;j<=n;j++)M[r][j]-=f*M[i][j]}}return M.map(r=>r[n])}
 function multipleRegression(rows:any[],yKey:string,xKeys:string[]){
-  const clean=rows.filter(r=>finite(r[yKey])&&xKeys.every(k=>finite(r[k])));if(clean.length<xKeys.length+3)return{ok:false,n:clean.length,note:'insufficient complete annual observations'};
-  const X=clean.map(r=>[1,...xKeys.map(k=>Number(r[k]))]),y=clean.map(r=>Number(r[yKey]));const p=X[0].length;const XtX=Array.from({length:p},()=>Array(p).fill(0)),Xty=Array(p).fill(0);
+  const clean=rows.filter((r:any)=>finite(r[yKey])&&xKeys.every((k:string)=>finite(r[k])));
+  if(clean.length<xKeys.length+3)return{ok:false,n:clean.length,note:'insufficient complete annual observations',r2:null,rmse:null,mae:null,coefs:[] as Array<{term:string;value:number}>};
+  const X:number[][]=clean.map((r:any)=>[1,...xKeys.map((k:string)=>Number(r[k]))]);
+  const y:number[]=clean.map((r:any)=>Number(r[yKey]));
+  const p=X[0].length;
+  const XtX:number[][]=Array.from({length:p},()=>Array(p).fill(0));
+  const Xty:number[]=Array(p).fill(0);
   for(let i=0;i<X.length;i++)for(let a=0;a<p;a++){Xty[a]+=X[i][a]*y[i];for(let b=0;b<p;b++)XtX[a][b]+=X[i][a]*X[i][b]}
-  const beta=solve(XtX,Xty);if(!beta)return{ok:false,n:clean.length,note:'singular predictor matrix'};
-  const pred=X.map(r=>r.reduce((s,v,j)=>s+v*beta[j],0)),mean=y.reduce((a,b)=>a+b,0)/y.length;const ssr=y.reduce((s,v,i)=>s+(v-pred[i])**2,0),sst=y.reduce((s,v)=>s+(v-mean)**2,0);return{ok:true,n:y.length,r2:sst>0?1-ssr/sst:null,rmse:Math.sqrt(ssr/y.length),mae:y.reduce((s,v,i)=>s+Math.abs(v-pred[i]),0)/y.length,coefs:[{term:'Intercept',value:beta[0]},...xKeys.map((k,i)=>({term:k,value:beta[i+1]}))]};
+  const beta=solve(XtX,Xty);
+  if(!beta)return{ok:false,n:clean.length,note:'singular predictor matrix',r2:null,rmse:null,mae:null,coefs:[] as Array<{term:string;value:number}>};
+  const pred:number[]=X.map((row:number[])=>row.reduce((acc:number,v:number,j:number)=>acc+v*beta[j],0));
+  const mean=y.reduce((a:number,b:number)=>a+b,0)/y.length;
+  const ssr=y.reduce((acc:number,v:number,i:number)=>acc+(v-pred[i])**2,0);
+  const sst=y.reduce((acc:number,v:number)=>acc+(v-mean)**2,0);
+  return{ok:true,n:y.length,note:'',r2:sst>0?1-ssr/sst:null,rmse:Math.sqrt(ssr/y.length),mae:y.reduce((acc:number,v:number,i:number)=>acc+Math.abs(v-pred[i]),0)/y.length,coefs:[{term:'Intercept',value:beta[0]},...xKeys.map((k:string,i:number)=>({term:k,value:beta[i+1]}))]};
 }
 function temporalHoldout(rows:any[]){
   const pts=rows.filter(r=>finite(r.year)&&finite(r.NDVI)).map(r=>({x:Number(r.year),y:Number(r.NDVI)}));if(pts.length<8)return{ok:false,note:'At least 8 valid annual observations are required.'};const cut=Math.max(3,Math.floor(pts.length*.8));const train=pts.slice(0,cut),test=pts.slice(cut);const mx=train.reduce((s,p)=>s+p.x,0)/train.length,my=train.reduce((s,p)=>s+p.y,0)/train.length;const den=train.reduce((s,p)=>s+(p.x-mx)**2,0);if(!den)return{ok:false,note:'Year variance is zero.'};const slope=train.reduce((s,p)=>s+(p.x-mx)*(p.y-my),0)/den,intercept=my-slope*mx;const pred=test.map(p=>intercept+slope*p.x),ys=test.map(p=>p.y),mean=ys.reduce((a,b)=>a+b,0)/ys.length;const sse=ys.reduce((s,v,i)=>s+(v-pred[i])**2,0),sst=ys.reduce((s,v)=>s+(v-mean)**2,0);return{ok:true,r2:sst>0?1-sse/sst:null,rmse:Math.sqrt(sse/ys.length),mae:ys.reduce((s,v,i)=>s+Math.abs(v-pred[i]),0)/ys.length,bias:ys.reduce((s,v,i)=>s+(pred[i]-v),0)/ys.length};
 }
 
 function pca2(rows:any[],keys:string[]){
-  const clean=rows.filter(r=>keys.every(k=>finite(r[k])));const n=clean.length,m=keys.length;if(n<Math.max(6,m))return{ok:false,n,note:'insufficient complete annual observations'};
-  const Z=clean.map(r=>keys.map(k=>Number(r[k])));for(let j=0;j<m;j++){const a=Z.map(r=>r[j]),mu=a.reduce((x,y)=>x+y,0)/n,sd=Math.sqrt(a.reduce((s,v)=>s+(v-mu)**2,0)/(n-1));if(sd===0)return{ok:false,n,note:`zero variance in ${keys[j]}`};for(let i=0;i<n;i++)Z[i][j]=(Z[i][j]-mu)/sd}
-  const C=Array.from({length:m},()=>Array(m).fill(0));for(let a=0;a<m;a++)for(let b=0;b<m;b++)C[a][b]=Z.reduce((s,r)=>s+r[a]*r[b],0)/(n-1);
-  const eig=(M:number[][],seed:number[])=>{let v=seed.slice();for(let it=0;it<100;it++){const w=M.map(r=>r.reduce((s,x,j)=>s+x*v[j],0));const norm=Math.sqrt(w.reduce((s,x)=>s+x*x,0))||1;v=w.map(x=>x/norm)}const Mv=M.map(r=>r.reduce((s,x,j)=>s+x*v[j],0));const val=v.reduce((s,x,i)=>s+x*Mv[i],0);return{v,val}};
-  const e1=eig(C,Array(m).fill(1));const D=C.map((r,i)=>r.map((x,j)=>x-e1.val*e1.v[i]*e1.v[j]));const e2=eig(D,Array.from({length:m},(_,i)=>i%2?1:-1));const total=C.reduce((s,r,i)=>s+r[i],0);return{ok:true,n,pc1Pct:100*e1.val/total,pc2Pct:100*e2.val/total,loadings:keys.map((k,i)=>({variable:k,pc1:e1.v[i],pc2:e2.v[i]}))};
+  const clean=rows.filter((r:any)=>keys.every((k:string)=>finite(r[k])));
+  const n=clean.length,m=keys.length;
+  if(n<Math.max(6,m))return{ok:false,n,note:'insufficient complete annual observations',pc1Pct:null,pc2Pct:null,loadings:[] as Array<{variable:string;pc1:number;pc2:number}>};
+  const Z:number[][]=clean.map((r:any)=>keys.map((k:string)=>Number(r[k])));
+  for(let j=0;j<m;j++){
+    const a:number[]=Z.map((row:number[])=>row[j]);
+    const mu=a.reduce((x:number,y:number)=>x+y,0)/n;
+    const sd=Math.sqrt(a.reduce((acc:number,v:number)=>acc+(v-mu)**2,0)/(n-1));
+    if(sd===0)return{ok:false,n,note:`zero variance in ${keys[j]}`,pc1Pct:null,pc2Pct:null,loadings:[] as Array<{variable:string;pc1:number;pc2:number}>};
+    for(let i=0;i<n;i++)Z[i][j]=(Z[i][j]-mu)/sd;
+  }
+  const C:number[][]=Array.from({length:m},()=>Array(m).fill(0));
+  for(let a=0;a<m;a++)for(let b=0;b<m;b++)C[a][b]=Z.reduce((acc:number,row:number[])=>acc+row[a]*row[b],0)/(n-1);
+  const eig=(M:number[][],seed:number[])=>{
+    let v:number[]=seed.slice();
+    for(let it=0;it<100;it++){
+      const w:number[]=M.map((row:number[])=>row.reduce((acc:number,x:number,j:number)=>acc+x*v[j],0));
+      const norm=Math.sqrt(w.reduce((acc:number,x:number)=>acc+x*x,0))||1;
+      v=w.map((x:number)=>x/norm);
+    }
+    const Mv:number[]=M.map((row:number[])=>row.reduce((acc:number,x:number,j:number)=>acc+x*v[j],0));
+    const val=v.reduce((acc:number,x:number,i:number)=>acc+x*Mv[i],0);
+    return{v,val};
+  };
+  const e1=eig(C,Array(m).fill(1));
+  const D:number[][]=C.map((row:number[],i:number)=>row.map((x:number,j:number)=>x-e1.val*e1.v[i]*e1.v[j]));
+  const e2=eig(D,Array.from({length:m},(_:unknown,i:number)=>i%2?1:-1));
+  const total=C.reduce((acc:number,row:number[],i:number)=>acc+row[i],0);
+  return{ok:true,n,note:'',pc1Pct:100*e1.val/total,pc2Pct:100*e2.val/total,loadings:keys.map((k:string,i:number)=>({variable:k,pc1:e1.v[i],pc2:e2.v[i]}))};
 }
 
 function AoiMap({aoi}:any){
