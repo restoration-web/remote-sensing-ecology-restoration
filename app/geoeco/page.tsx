@@ -127,6 +127,7 @@ function AnalysisWorkspace(props:any){
 
 function GeoMap({aoi,result,perspective}:{aoi:AOI;result:MapResult|null;perspective:boolean}){
  const el=useRef<HTMLDivElement>(null),mapRef=useRef<any>(null),aoiLayer=useRef<any>(null),imgLayer=useRef<any>(null);
+ const [overlayState,setOverlayState]=useState<'idle'|'loading'|'loaded'|'error'>('idle');
  useEffect(()=>{let dead=false;(async()=>{if(!el.current||mapRef.current)return;const L=await import('leaflet');if(dead||!el.current)return;
   const map=L.map(el.current,{zoomControl:true}).setView([-2.2,115.5],6);
   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© OpenStreetMap contributors'}).addTo(map);
@@ -138,9 +139,20 @@ function GeoMap({aoi,result,perspective}:{aoi:AOI;result:MapResult|null;perspect
  })();return()=>{dead=true}},[aoi]);
  useEffect(()=>{let dead=false;(async()=>{const map=mapRef.current;if(!map)return;const L=await import('leaflet');if(dead)return;
   if(imgLayer.current){map.removeLayer(imgLayer.current);imgLayer.current=null}
-  if(result?.imageUrl&&result.bounds){imgLayer.current=L.imageOverlay(result.imageUrl,result.bounds,{opacity:.78,interactive:false}).addTo(map);imgLayer.current.bringToFront?.();if(aoiLayer.current)aoiLayer.current.bringToFront?.();}
+  if(result?.imageUrl&&result.bounds){
+    setOverlayState('loading');
+    const overlay=L.imageOverlay(result.imageUrl,result.bounds,{opacity:.88,interactive:false,className:'geoeco-result-overlay'});
+    overlay.on('load',()=>setOverlayState('loaded'));
+    overlay.on('error',()=>setOverlayState('error'));
+    imgLayer.current=overlay.addTo(map);
+    imgLayer.current.bringToFront?.();
+    if(aoiLayer.current)aoiLayer.current.bringToFront?.();
+    try{map.fitBounds(result.bounds,{padding:[16,16],maxZoom:14})}catch{}
+  }else{
+    setOverlayState('idle');
+  }
  })();return()=>{dead=true}},[result]);
- return <div className={perspective?styles.perspectiveFrame:styles.flatFrame}><div ref={el} className={styles.realMap}/>{result?.legend&&<div className={styles.floatingLegend}><b>{result.layer}</b>{result.legend.map(x=><div key={x.class}><i style={{background:x.color}}></i><span>{x.label}</span></div>)}</div>}</div>
+ return <div className={perspective?styles.perspectiveFrame:styles.flatFrame}><div ref={el} className={styles.realMap}/>{result?.legend&&<div className={styles.floatingLegend}><b>{result.layer}</b>{result.legend.map(x=><div key={x.class}><i style={{background:x.color}}></i><span>{x.label}</span></div>)}</div>}<div className={styles.overlayStatus} data-state={overlayState}>{overlayState==='loaded'?'Raster loaded':overlayState==='loading'?'Loading raster…':overlayState==='error'?'Raster failed to load':'Base map only'}</div></div>
 }
 
 function LegendArea({result}:{result:MapResult}){
