@@ -55,7 +55,7 @@ export async function POST(req:NextRequest){
   const fireBands=latest.select(['frp','confidence','Bright_ti4','acq_epoch']).updateMask(hotspotMask);
 
   const pts=fireBands.addBands(ee.Image.pixelLonLat()).sample({
-    region:geom,scale:375,geometries:true,numPixels:1000,seed:42,tileScale:4
+    region:geom,scale:375,geometries:true,numPixels:600,seed:42,tileScale:4
   });
 
   const pointInfo=await evalEE(pts);
@@ -68,28 +68,15 @@ export async function POST(req:NextRequest){
     };
   }).filter((x:any)=>Number.isFinite(x.lat)&&Number.isFinite(x.lon)&&x.frp>0);
 
-  // Daily centroid summaries for an observed spread proxy.
-  const dayList=ee.List.sequence(0,days-1);
-  const dailyFC=ee.FeatureCollection(dayList.map((i:any)=>{
-    i=ee.Number(i);const ds=s.advance(i,'day'),de=ds.advance(1,'day');
-    const dc=col.filterDate(ds,de);
-    const mask=dc.select('frp').max().gt(0).selfMask().clip(geom);
-    const coords=ee.Image.pixelLonLat().updateMask(mask);
-    const stats=coords.reduceRegion({reducer:ee.Reducer.mean(),geometry:geom,scale:375,maxPixels:1e7,bestEffort:true,tileScale:4});
-    const count=mask.reduceRegion({reducer:ee.Reducer.count(),geometry:geom,scale:375,maxPixels:1e7,bestEffort:true,tileScale:4}).get('frp');
-    const epoch=dc.select('acq_epoch').max().reduceRegion({reducer:ee.Reducer.max(),geometry:geom,scale:375,maxPixels:1e7,bestEffort:true,tileScale:4}).get('acq_epoch');
-    return ee.Feature(null,{date:ds.format('YYYY-MM-dd'),lon:stats.get('longitude'),lat:stats.get('latitude'),count,epoch});
-  })).filter(ee.Filter.notNull(['lon','lat','epoch']));
-  const dailyInfo=await evalEE(dailyFC);
-  const daily=(dailyInfo?.features||[]).map((f:any)=>f.properties||{}).map((r:any)=>({
-    date:String(r.date),lon:Number(r.lon),lat:Number(r.lat),count:Number(r.count||0),epoch:Number(r.epoch||0)
-  })).filter((r:any)=>Number.isFinite(r.lon)&&Number.isFinite(r.lat)&&r.epoch>0);
-
-  let spreadProxy:any={available:false,note:'At least two daily hotspot centroids are required.'};
-  if(daily.length>=2){
-    const a=daily[0],b=daily[daily.length-1],dist=haversineKm(a,b),hours=(b.epoch-a.epoch)/3600;
+  // Observed spread proxy from earliest/latest sampled hotspot detections.
+  // This is intentionally labelled a proxy, not a physical flame-front ROS.
+  const temporalPts=[...points].filter((x:any)=>x.epoch>0).sort((a:any,b:any)=>a.epoch-b.epoch);
+  let spreadProxy:any={available:false,note:'At least two time-separated hotspot detections are required.'};
+  if(temporalPts.length>=2){
+    const a=temporalPts[0],b=temporalPts[temporalPts.length-1];
+    const dist=haversineKm(a,b),hours=(b.epoch-a.epoch)/3600;
     spreadProxy={available:hours>0,distanceKm:dist,elapsedHours:hours,centroidDisplacementKmPerHour:hours>0?dist/hours:null,
-      note:'Centroid-displacement proxy from satellite hotspot detections; not physical flame-front rate of spread.'};
+      note:'Displacement proxy between earliest and latest sampled satellite hotspot detections; not physical flame-front rate of spread.'};
   }
 
   const latestEpoch=points.length?Math.max(...points.map((x:any)=>x.epoch)):null;
@@ -108,7 +95,7 @@ export async function POST(req:NextRequest){
     const hotspotSpectral=spectral.updateMask(hotspotMask.reproject({crs:'EPSG:4326',scale:375}));
     context=await evalEE(hotspotSpectral.reduceRegion({
       reducer:ee.Reducer.mean().combine({reducer2:ee.Reducer.stdDev(),sharedInputs:true}),
-      geometry:geom,scale:375,maxPixels:1e7,bestEffort:true,tileScale:4
+      geometry:geom,scale:750,maxPixels:5e6,bestEffort:true,tileScale:8
     }));
   }
 
@@ -123,7 +110,7 @@ export async function POST(req:NextRequest){
 
   return NextResponse.json({
     status:'success',source:'NASA FIRMS / VIIRS 375 m NRT via Google Earth Engine',
-    period:{days,end},bounds:boundsFromGeoJSON(p.aoi),points:points.slice(0,600),daily,summary,goldenTime,spreadProxy,
+    period:{days,end},bounds:boundsFromGeoJSON(p.aoi),points:points.slice(0,600),summary,goldenTime,spreadProxy,
     vegetationContext:context,
     scientificNote:'VIIRS NRT active-fire detections support monitoring but are not science-quality final products. Hotspot pixels do not directly represent burned area or flame perimeter.',
     provenance:{datasets:['NASA/LANCE/SNPP_VIIRS/C2','NASA/LANCE/NOAA20_VIIRS/C2','COPERNICUS/S2_SR_HARMONIZED'],hotspotResolutionM:375,responseWindowMinutes}
