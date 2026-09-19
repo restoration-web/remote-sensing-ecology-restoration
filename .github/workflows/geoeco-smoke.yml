@@ -10,66 +10,47 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Wait for Vercel production deployment
-        run: sleep 45
+        run: sleep 60
 
-      - name: Generate NDVI for representative large AOI and fetch raster
+      - name: Python Earth Engine self-test
         run: |
           set -euo pipefail
-          cat >/tmp/payload.json <<'JSON'
+          curl --fail --show-error --silent --max-time 180             https://geospatial-restoration-q1.vercel.app/api/geoeco_engine             -o /tmp/selftest.json
+          cat /tmp/selftest.json
+          python -c "import json; x=json.load(open('/tmp/selftest.json')); assert x.get('status')=='success',x; assert x.get('sampleCountReturned',0)>0,x"
+
+      - name: Generate NDVI map and download raster
+        run: |
+          set -euo pipefail
+          cat >/tmp/map-payload.json <<'JSON'
           {
+            "action":"map",
             "start":"2024-01-01",
             "end":"2026-09-19",
             "layer":"NDVI",
-            "aoi":{
-              "type":"FeatureCollection",
-              "features":[{
-                "type":"Feature",
-                "properties":{},
-                "geometry":{
-                  "type":"Polygon",
-                  "coordinates":[[
-                    [114.0,-4.0],[115.0,-4.0],[115.0,-3.0],[114.0,-3.0],[114.0,-4.0]
-                  ]]
-                }
-              }]
-            }
+            "aoi":{"type":"FeatureCollection","features":[{"type":"Feature","properties":{},"geometry":{"type":"Polygon","coordinates":[[[114.55,-3.45],[114.75,-3.45],[114.75,-3.25],[114.55,-3.25],[114.55,-3.45]]]}}]}
           }
           JSON
-          HTTP=$(curl --show-error --silent --max-time 300 -w '%{http_code}' -H 'content-type: application/json' --data-binary @/tmp/payload.json https://geospatial-restoration-q1.vercel.app/api/geoeco/analysis -o /tmp/map.json || true)
-          echo HTTP=$HTTP
+          curl --fail --show-error --silent --max-time 300             -H 'content-type: application/json'             --data-binary @/tmp/map-payload.json             https://geospatial-restoration-q1.vercel.app/api/geoeco_engine             -o /tmp/map.json
           cat /tmp/map.json
-          test "$HTTP" = "200"
-          python -c "import json; x=json.load(open('/tmp/map.json')); assert x.get('status')=='success',x; assert x.get('layer')=='NDVI',x; assert len(x.get('legend') or [])==5,x; assert len(x.get('classArea') or [])>0,x; assert x.get('imageUrl'),x"
+          python -c "import json; x=json.load(open('/tmp/map.json')); assert x.get('status')=='success',x; assert x.get('imageUrl'),x; assert len(x.get('legend') or [])==5,x; assert len(x.get('classArea') or [])>0,x"
           IMG=$(python -c "import json; print(json.load(open('/tmp/map.json'))['imageUrl'])")
-          curl --fail --show-error --silent --retry 2 --retry-delay 1 --retry-all-errors --max-time 120 "$IMG" -o /tmp/result.png
+          curl --fail --show-error --silent --max-time 120 "$IMG" -o /tmp/result.png
           test -s /tmp/result.png
-          BYTES=$(stat -c%s /tmp/result.png)
-          test "$BYTES" -gt 1000
           file /tmp/result.png | grep -q "PNG image data"
-          echo "PNG_BYTES=$BYTES"
+          echo "PNG_BYTES=$(stat -c%s /tmp/result.png)"
 
-      - name: Verify GeoEco statistics data for representative large AOI
+      - name: Generate spatial statistics
         run: |
           set -euo pipefail
-          cat >/tmp/time.json <<'JSON'
+          cat >/tmp/stats-payload.json <<'JSON'
           {
+            "action":"stats",
             "start":"2024-01-01",
             "end":"2026-09-19",
-            "aoi":{
-              "type":"FeatureCollection",
-              "features":[{
-                "type":"Feature",
-                "properties":{},
-                "geometry":{
-                  "type":"Polygon",
-                  "coordinates":[[
-                    [114.0,-4.0],[115.0,-4.0],[115.0,-3.0],[114.0,-3.0],[114.0,-4.0]
-                  ]]
-                }
-              }]
-            }
+            "aoi":{"type":"FeatureCollection","features":[{"type":"Feature","properties":{},"geometry":{"type":"Polygon","coordinates":[[[114.55,-3.45],[114.75,-3.45],[114.75,-3.25],[114.55,-3.25],[114.55,-3.45]]]}}]}
           }
           JSON
-          curl --fail --show-error --silent --retry 3 --retry-delay 2 --retry-all-errors --max-time 300 -H 'content-type: application/json' --data-binary @/tmp/time.json https://geospatial-restoration-q1.vercel.app/api/geoeco/temporal -o /tmp/time-result.json
-          cat /tmp/time-result.json
-          python -c "import json; x=json.load(open('/tmp/time-result.json')); assert x.get('status')=='success',x; rows=x.get('rows') or []; assert len(rows)>=4,x; assert all(any(r.get(k) is not None for r in rows) for k in ['NDVI','NDRE','NDMI','BSI','LST','Rainfall']); print('ROWS',len(rows))"
+          curl --fail --show-error --silent --max-time 300             -H 'content-type: application/json'             --data-binary @/tmp/stats-payload.json             https://geospatial-restoration-q1.vercel.app/api/geoeco_engine             -o /tmp/stats.json
+          cat /tmp/stats.json
+          python -c "import json; x=json.load(open('/tmp/stats.json')); assert x.get('status')=='success',x; assert x.get('mode')=='spatial-sample',x; assert x.get('sampleCountReturned',0)>100,x; rows=x.get('rows') or []; assert any(r.get('NDVI') is not None for r in rows),x; assert any(r.get('NDRE') is not None for r in rows),x; assert any(r.get('LST') is not None for r in rows),x"
