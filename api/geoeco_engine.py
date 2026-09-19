@@ -200,6 +200,135 @@ def stats_analysis(p):
         "limitations":"Reproducible spatial sample. Correlation and regression describe spatial association, not causality; spatial autocorrelation and different native resolutions remain relevant."
     }
 
+
+def haversine_km(a,b):
+    R=6371.0
+    p1=math.radians(a["lat"]); p2=math.radians(b["lat"])
+    dlat=math.radians(b["lat"]-a["lat"]); dlon=math.radians(b["lon"]-a["lon"])
+    q=math.sin(dlat/2)**2 + math.cos(p1)*math.cos(p2)*math.sin(dlon/2)**2
+    return 2*R*math.asin(math.sqrt(q))
+
+def fire_analysis(p):
+    geom=aoi_geom(p["aoi"])
+    end=str(p.get("end","2026-09-19"))
+    days=min(30,max(1,int(p.get("days",7))))
+    response_window=min(720,max(15,int(p.get("responseWindowMinutes",60))))
+    e=ee.Date(end).advance(1,"day")
+    s=e.advance(-days,"day")
+
+    snpp=(ee.ImageCollection("NASA/LANCE/SNPP_VIIRS/C2")
+          .filterDate(s,e).filterBounds(geom))
+    noaa=(ee.ImageCollection("NASA/LANCE/NOAA20_VIIRS/C2")
+          .filterDate(s,e).filterBounds(geom))
+    col=snpp.merge(noaa).sort("system:time_start")
+    image_count=int(col.size().getInfo() or 0)
+
+    empty_result={
+        "status":"success",
+        "source":"NASA FIRMS / VIIRS 375 m NRT via Google Earth Engine",
+        "period":{"days":days,"end":end},
+        "bounds":bounds_geojson(p["aoi"]),
+        "points":[],
+        "summary":{"count":0,"frpMean":None,"frpMax":None,"highConfidenceCount":0,"nominalOrHighCount":0,"latestEpoch":None},
+        "goldenTime":None,
+        "spreadProxy":{"available":False,"note":"No VIIRS hotspot detections were found in the AOI and selected period."},
+        "vegetationContext":None,
+        "scientificNote":"No active-fire detections were found for the AOI and selected period. Zero detections do not prove that no fire occurred; cloud, overpass timing, sensor limits, and fire size can affect detection.",
+        "provenance":{"engine":"Python Earth Engine API","version":"GEOECO-PY-FIRE-1.0.0","datasets":["NASA/LANCE/SNPP_VIIRS/C2","NASA/LANCE/NOAA20_VIIRS/C2"],"hotspotResolutionM":375,"responseWindowMinutes":response_window,"imageCount":image_count,"validHotspotPixels":0}
+    }
+    if image_count<=0:
+        return empty_result
+
+    frp_max=col.select("frp").max().rename("frp").clip(geom)
+    valid_dict=(frp_max.gt(0).selfMask().reduceRegion(
+        reducer=ee.Reducer.count(),geometry=geom,scale=375,maxPixels=10000000,
+        bestEffort=True,tileScale=4).getInfo() or {})
+    valid_pixels=int(valid_dict.get("frp") or 0)
+    if valid_pixels<=0:
+        return empty_result
+
+    hotspot_mask=frp_max.gt(0).selfMask()
+    latest=col.qualityMosaic("acq_epoch").clip(geom)
+    fire_bands=latest.select(["frp","confidence","Bright_ti4","acq_epoch"]).updateMask(hotspot_mask)
+    pts=(fire_bands.addBands(ee.Image.pixelLonLat()).sample(
+        region=geom,scale=375,geometries=True,numPixels=600,seed=42,tileScale=4).getInfo())
+
+    points=[]
+    for feat in pts.get("features",[]):
+        pr=feat.get("properties",{})
+        co=(feat.get("geometry") or {}).get("coordinates",[])
+        if len(co)<2: continue
+        frp=float(pr.get("frp") or 0)
+        if frp<=0: continue
+        points.append({
+            "lon":float(co[0]),"lat":float(co[1]),"frp":frp,
+            "confidence":int(pr.get("confidence") if pr.get("confidence") is not None else -1),
+            "brightness":float(pr.get("Bright_ti4") or 0),
+            "epoch":float(pr.get("acq_epoch") or 0)
+        })
+
+    temporal=sorted([x for x in points if x["epoch"]>0],key=lambda x:x["epoch"])
+    spread={"available":False,"note":"At least two time-separated hotspot detections are required."}
+    if len(temporal)>=2:
+        a,b=temporal[0],temporal[-1]
+        hours=(b["epoch"]-a["epoch"])/3600.0
+        dist=haversine_km(a,b)
+        spread={
+            "available":hours>0,
+            "distanceKm":dist,
+            "elapsedHours":hours,
+            "centroidDisplacementKmPerHour":(dist/hours if hours>0 else None),
+            "note":"Displacement proxy between earliest and latest sampled satellite hotspot detections; not physical flame-front rate of spread."
+        }
+
+    latest_epoch=max([x["epoch"] for x in points],default=None)
+    golden=None
+    if latest_epoch:
+        import datetime
+        end_dt=datetime.datetime.fromisoformat(end+"T23:59:59+00:00")
+        age_h=max(0,(end_dt.timestamp()-latest_epoch)/3600.0)
+        elapsed_min=age_h*60.0
+        golden={
+            "responseWindowMinutes":response_window,
+            "elapsedSinceLatestDetectionMinutes":elapsed_min,
+            "withinWindow":elapsed_min<=response_window,
+            "status":"WITHIN CONFIGURED RESPONSE WINDOW" if elapsed_min<=response_window else "CONFIGURED RESPONSE WINDOW EXCEEDED",
+            "note":"Operational response-window proxy, not a universal ecological threshold."
+        }
+
+    context=None
+    if points:
+        s2,_=s2_composite(ee.Date(end).advance(-45,"day").format("YYYY-MM-dd").getInfo(),
+                          ee.Date(end).advance(1,"day").format("YYYY-MM-dd").getInfo(),geom)
+        idx=indices(s2).select(["NDVI","NDMI","BSI"])
+        hctx=idx.updateMask(hotspot_mask.reproject(crs="EPSG:4326",scale=375))
+        context=(hctx.reduceRegion(
+            reducer=ee.Reducer.mean().combine(ee.Reducer.stdDev(),sharedInputs=True),
+            geometry=geom,scale=750,maxPixels=5000000,bestEffort=True,tileScale=8).getInfo() or {})
+
+    summary={
+        "count":len(points),
+        "frpMean":(sum(x["frp"] for x in points)/len(points) if points else None),
+        "frpMax":(max(x["frp"] for x in points) if points else None),
+        "highConfidenceCount":sum(1 for x in points if x["confidence"]>=2),
+        "nominalOrHighCount":sum(1 for x in points if x["confidence"]>=1),
+        "latestEpoch":latest_epoch
+    }
+
+    return {
+        "status":"success",
+        "source":"NASA FIRMS / VIIRS 375 m NRT via Google Earth Engine",
+        "period":{"days":days,"end":end},
+        "bounds":bounds_geojson(p["aoi"]),
+        "points":points[:600],
+        "summary":summary,
+        "goldenTime":golden,
+        "spreadProxy":spread,
+        "vegetationContext":context,
+        "scientificNote":"VIIRS NRT active-fire detections support monitoring but are not final science-quality fire perimeters. Hotspot pixels do not directly represent burned area or flame-front position.",
+        "provenance":{"engine":"Python Earth Engine API","version":"GEOECO-PY-FIRE-1.0.0","datasets":["NASA/LANCE/SNPP_VIIRS/C2","NASA/LANCE/NOAA20_VIIRS/C2","COPERNICUS/S2_SR_HARMONIZED"],"hotspotResolutionM":375,"responseWindowMinutes":response_window,"imageCount":image_count,"validHotspotPixels":valid_pixels}
+    }
+
 class handler(BaseHTTPRequestHandler):
     def _send(self, code, obj):
         body=json.dumps(obj).encode("utf-8")
@@ -226,6 +355,8 @@ class handler(BaseHTTPRequestHandler):
             action=str(payload.get("action","stats"))
             if action=="map":
                 out=map_analysis(payload)
+            elif action=="fire":
+                out=fire_analysis(payload)
             else:
                 out=stats_analysis(payload)
             self._send(200,out)
