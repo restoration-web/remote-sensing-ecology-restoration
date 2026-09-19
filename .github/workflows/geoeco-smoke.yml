@@ -54,3 +54,31 @@ jobs:
           curl --fail --show-error --silent --max-time 300             -H 'content-type: application/json'             --data-binary @/tmp/stats-payload.json             https://geospatial-restoration-q1.vercel.app/api/geoeco_engine             -o /tmp/stats.json
           cat /tmp/stats.json
           python -c "import json; x=json.load(open('/tmp/stats.json')); assert x.get('status')=='success',x; assert x.get('mode')=='spatial-sample',x; assert x.get('sampleCountReturned',0)>100,x; rows=x.get('rows') or []; assert any(r.get('NDVI') is not None for r in rows),x; assert any(r.get('NDRE') is not None for r in rows),x; assert any(r.get('LST') is not None for r in rows),x"
+
+      - name: Verify NASA FIRMS fire intelligence
+        run: |
+          set -euo pipefail
+          cat >/tmp/fire.json <<'JSON'
+          {
+            "end":"2026-09-15",
+            "days":7,
+            "responseWindowMinutes":60,
+            "aoi":{
+              "type":"FeatureCollection",
+              "features":[{
+                "type":"Feature",
+                "properties":{},
+                "geometry":{
+                  "type":"Polygon",
+                  "coordinates":[[
+                    [113.5,-4.5],[116.0,-4.5],[116.0,-1.5],[113.5,-1.5],[113.5,-4.5]
+                  ]]
+                }
+              }]
+            }
+          }
+          JSON
+          curl --fail --show-error --silent --retry 3 --retry-delay 2 --retry-all-errors --max-time 300             -H 'content-type: application/json'             --data-binary @/tmp/fire.json             https://geospatial-restoration-q1.vercel.app/api/geoeco/fire             -o /tmp/fire-result.json
+          cat /tmp/fire-result.json
+          python -c "import json; x=json.load(open('/tmp/fire-result.json')); assert x.get('status')=='success',x; assert 'summary' in x,x; assert 'spreadProxy' in x,x; assert 'provenance' in x,x; print('HOTSPOTS',x.get('summary',{}).get('count'))"
+
