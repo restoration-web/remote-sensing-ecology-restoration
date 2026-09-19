@@ -3,7 +3,7 @@ import {NextRequest,NextResponse} from 'next/server';
 export const runtime='nodejs';
 export const maxDuration=300;
 
-const ee=require('@google/earthengine');
+try{process.chdir('/tmp')}catch{}\nconst ee=require('@google/earthengine');
 
 function initEarthEngine(){
   return new Promise<void>((resolve,reject)=>{
