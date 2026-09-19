@@ -51,7 +51,7 @@ export default function GeoEco(){
  return <main className={styles.shell}>
   <aside className={styles.sidebar}>
    <div><div className={styles.brand}>GeoEco AI</div><div className={styles.tag}>Geospatial Environmental Intelligence</div></div>
-   <nav className={styles.nav}>{['Dashboard','Analysis','Scientific Library','Help'].map(x=><button key={x} className={tab===x?styles.active:''} onClick={()=>setTab(x)}>{x}</button>)}</nav>
+   <nav className={styles.nav}>{['Dashboard','Analysis','Statistics & Models','Scientific Library','Help'].map(x=><button key={x} className={tab===x?styles.active:''} onClick={()=>setTab(x)}>{x}</button>)}</nav>
    <div className={styles.sideFoot}>Engine v1.2<br/><span>Classified maps + provenance</span></div>
   </aside>
 
@@ -156,6 +156,35 @@ function AOIUploader({aoi,setAoi}:any){
  return <label className={styles.uploadCompact}><span>AOI</span><input type="file" accept=".zip,.geojson,.json" onChange={e=>load(e.target.files?.[0])}/><small>{aoi?msg:'Upload study boundary'}</small></label>
 }
 
+
+
+function StatisticsPage({temporal,aoi,start,end,run,running}:any){
+ if(!aoi?.geometry){
+  return <div className={styles.statsLanding}>
+   <section className={styles.card}>
+    <div className={styles.sectionHead}><div><h2>Statistics & Models</h2><p>Upload an AOI and run an analysis first. This page will then populate automatically from the same analysis object used for the maps.</p></div><span className={styles.pill}>Awaiting AOI</span></div>
+    <div className={styles.statsFeatureGrid}>
+     {['Descriptive statistics','Correlation matrix','Bivariate regression','Scatterplots','Temporal trajectories','Model metrics','Annual data table','Reproducibility fingerprint'].map(x=><div key={x}><b>{x}</b><span>Generated from the declared AOI and period.</span></div>)}
+    </div>
+   </section>
+  </div>
+ }
+ if(running||temporal?.status==='running'){
+  return <div className={styles.processing}>Calculating temporal statistics and models for the selected AOI…</div>
+ }
+ if(!temporal||temporal.status!=='success'){
+  return <div className={styles.statsLanding}>
+   <section className={styles.card}>
+    <div className={styles.sectionHead}><div><h2>Statistics & Models</h2><p>No completed temporal analysis is available yet for the current AOI.</p></div><button onClick={()=>run()}>Run Full Analysis</button></div>
+    {temporal?.note&&<div className={styles.errorBox}>{temporal.note}</div>}
+    <div className={styles.statsFeatureGrid}>
+     {['NDVI–NDMI correlation','NDVI–BSI regression','NDVI–LST regression','NDVI–Rainfall relationship','NDMI–LST relationship','BSI–LST relationship','Descriptive statistics','Annual observation table'].map(x=><div key={x}><b>{x}</b><span>Available after processing.</span></div>)}
+    </div>
+   </section>
+  </div>
+ }
+ return <TemporalDashboard temporal={temporal} aoi={aoi} start={start} end={end}/>
+}
 
 function TemporalDashboard({temporal,aoi,start,end}:any){
  const rows=mergeTemporal(temporal);
