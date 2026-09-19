@@ -10,7 +10,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Wait for Vercel production deployment
-        run: sleep 90
+        run: sleep 45
 
       - name: Generate NDVI for representative large AOI and fetch raster
         run: |
@@ -35,8 +35,10 @@ jobs:
             }
           }
           JSON
-          curl --fail --show-error --silent --retry 3 --retry-delay 2 --retry-all-errors --max-time 300 -H 'content-type: application/json' --data-binary @/tmp/payload.json https://geospatial-restoration-q1.vercel.app/api/geoeco/analysis -o /tmp/map.json
+          HTTP=$(curl --show-error --silent --max-time 300 -w '%{http_code}' -H 'content-type: application/json' --data-binary @/tmp/payload.json https://geospatial-restoration-q1.vercel.app/api/geoeco/analysis -o /tmp/map.json || true)
+          echo HTTP=$HTTP
           cat /tmp/map.json
+          test "$HTTP" = "200"
           python -c "import json; x=json.load(open('/tmp/map.json')); assert x.get('status')=='success',x; assert x.get('layer')=='NDVI',x; assert len(x.get('legend') or [])==5,x; assert len(x.get('classArea') or [])>0,x; assert x.get('imageUrl'),x"
           IMG=$(python -c "import json; print(json.load(open('/tmp/map.json'))['imageUrl'])")
           curl --fail --show-error --silent --retry 2 --retry-delay 1 --retry-all-errors --max-time 120 "$IMG" -o /tmp/result.png
