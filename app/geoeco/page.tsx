@@ -330,7 +330,7 @@ function Provenance({result}:{result:MapResult}){const p=result.provenance||{};r
 function AOIUploader({aoi,setAoi}:any){
  const [msg,setMsg]=useState('GeoJSON or zipped Shapefile');
  async function load(file?:File){if(!file)return;try{let geo:any;const n=file.name.toLowerCase();if(n.endsWith('.zip')){const shp=(await import('shpjs')).default;geo=await shp(await file.arrayBuffer());if(Array.isArray(geo))geo={type:'FeatureCollection',features:geo.flatMap((g:any)=>g?.features||[])}}else if(n.endsWith('.geojson')||n.endsWith('.json'))geo=JSON.parse(await file.text());else throw new Error('Use .geojson/.json or .zip');const fc=geo?.type==='FeatureCollection'?geo:{type:'FeatureCollection',features:geo?.type==='Feature'?[geo]:[]};if(!fc.features?.length)throw new Error('No valid features');setAoi({name:file.name,featureCount:fc.features.length,geometry:fc});setMsg(file.name+' • '+fc.features.length+' feature(s)')}catch(e:any){setAoi(null);setMsg(e?.message||'Failed')}}
- return <label className={styles.uploadCompact}><span>AOI</span><input type="file" accept=".zip,.geojson,.json" onChange={e=>load(e.target.files?.[0])}/><small>{aoi?msg:'Upload study boundary'}</small></label>
+ return <label className={styles.uploadCompact}><span>AOI</span><input className={styles.hiddenFileInput} type="file" accept=".zip,.geojson,.json" onChange={e=>load(e.target.files?.[0])}/><span className={styles.fileButton}>Choose AOI File</span><small>{aoi?msg:'Upload a GeoJSON or zipped Shapefile study boundary'}</small></label>
 }
 
 
