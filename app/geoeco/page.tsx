@@ -99,7 +99,7 @@ export default function GeoEco(){
        setTemporal({status:'error',note:'Statistics were not started because map generation failed.'});
        return;
      }
-     const timeData=await fetchJsonWithRetry('/api/geoeco/temporal',{
+     const timeData=await fetchJsonWithRetry('/api/geoeco_engine',{
        method:'POST',headers:{'Content-Type':'application/json'},
        body:JSON.stringify({action:'stats',start,end,aoi:aoi.geometry,aoiName:aoi.name})
      },3);
