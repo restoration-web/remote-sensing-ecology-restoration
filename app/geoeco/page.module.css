@@ -27,3 +27,23 @@
 .fireMetricGrid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}.fireMetricGrid .metric{min-height:88px}
 @media(max-width:1000px){.mapControls{grid-template-columns:repeat(2,1fr)}.fireMetricGrid{grid-template-columns:repeat(2,1fr)}}
 @media(max-width:650px){.mapControls{grid-template-columns:1fr}.fireMetricGrid{grid-template-columns:1fr}.checkControl{white-space:normal}}
+
+.appFooter{margin-top:24px;padding:16px 4px 8px;border-top:1px solid #dce6e1;color:#64756e;font-size:11px;text-align:right}
+.fireControls{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:12px 0}
+.fireControls label{display:flex;flex-direction:column;gap:5px;font-size:10px;font-weight:800;color:#52635c}
+.fireControls select{border:1px solid #d6e0dc;border-radius:8px;padding:9px;background:#fbfcfc;color:#213b33}
+.publicationPage{display:flex;justify-content:center}.publicationSheet{width:min(1180px,100%);background:#fff;border:1px solid #d8e2de;border-radius:14px;padding:18px;box-shadow:0 12px 30px rgba(20,42,35,.08)}
+.publicationHeader{display:flex;justify-content:space-between;gap:20px;align-items:flex-end;border-bottom:2px solid #173f34;padding-bottom:12px;margin-bottom:14px}
+.publicationHeader h2{margin:0;font-size:24px}.publicationHeader p{margin:4px 0 0;color:#64756e}.publicationAuthor{font-size:12px;font-weight:800;color:#285d4d}
+.publicationGrid{display:grid;grid-template-columns:minmax(0,2.3fr) minmax(230px,.7fr);gap:16px}.publicationMainMap{position:relative;border:1px solid #cfdad5;padding:8px;background:#fff}
+.publicationSide{display:flex;flex-direction:column;gap:14px}.publicationSide>div{border:1px solid #dde6e2;border-radius:10px;padding:12px}.publicationSide h3{margin:0 0 9px;font-size:13px}
+.insetMap{height:190px;border-radius:8px;overflow:hidden;border:1px solid #d5dfdb}.publicationLegend{display:flex;flex-direction:column;gap:7px}.publicationLegend div{display:flex;align-items:center;gap:8px;font-size:11px}.publicationLegend i{width:18px;height:12px;border-radius:2px;display:inline-block}
+.northArrow{position:absolute;right:16px;top:16px;z-index:700;background:rgba(255,255,255,.94);border:1px solid #d7e1dd;border-radius:8px;padding:7px 10px;text-align:center;font-weight:900;line-height:1.1}
+.coordTop,.coordBottom,.coordLeft,.coordRight{position:absolute;z-index:690;background:rgba(255,255,255,.82);font-size:9px;padding:2px 5px;border-radius:4px;color:#334a42}
+.coordTop{top:8px;left:50%;transform:translateX(-50%)}.coordBottom{bottom:8px;left:50%;transform:translateX(-50%)}.coordLeft{left:8px;top:50%;transform:translateY(-50%) rotate(-90deg)}.coordRight{right:8px;top:50%;transform:translateY(-50%) rotate(90deg)}
+.scaleNote{position:absolute;left:14px;bottom:12px;z-index:680;background:rgba(255,255,255,.82);font-size:8px;padding:3px 5px;border-radius:4px}.publicationFooter{margin-top:14px;border-top:1px solid #d8e2de;padding-top:10px;text-align:center;font-size:10px;color:#65756f}
+.ecoNote{margin-top:14px;padding:12px 14px;border-left:4px solid #2d8068;background:#eef5f2;border-radius:5px;display:flex;flex-direction:column;gap:4px}.ecoNote b{font-size:11px;color:#245e4b}.ecoNote span{font-size:10px;line-height:1.55;color:#53665f}
+.chartDownloads{display:flex;gap:6px;justify-content:flex-end;margin-top:8px}.chartDownloads button{font-size:9px;padding:6px 9px;background:#e8f1ed;color:#285d4d;border:1px solid #d2e0da}
+.histRect{fill:#4f8d79}.histCard svg{width:100%;height:auto;display:block}
+@media(max-width:900px){.publicationGrid{grid-template-columns:1fr}.publicationHeader{align-items:flex-start;flex-direction:column}.fireControls{grid-template-columns:1fr 1fr}}
+@media(max-width:650px){.fireControls{grid-template-columns:1fr}.publicationSheet{padding:10px}.coordLeft,.coordRight{display:none}}
