@@ -1,30 +1,11 @@
 import {NextRequest,NextResponse} from 'next/server';
+import {getEarthEngine} from '@/lib/earthEngineRuntime';
 
 export const runtime='nodejs';
 export const maxDuration=300;
 
 let ee:any;
-function loadEE(){if(!ee)ee=require('@google/earthengine');return ee;}
 
-function initEE(){
-  return new Promise<void>((resolve,reject)=>{
-    const raw=process.env.GEE_PRIVATE_KEY;
-    const email=process.env.GEE_SERVICE_ACCOUNT;
-    let project=process.env.GEE_PROJECT_ID;
-    if(!raw){reject(new Error('Missing GEE_PRIVATE_KEY'));return;}
-    try{
-      let key:any;
-      if(raw.trim().startsWith('{')){key=JSON.parse(raw);project=key.project_id||project;}
-      else key={type:'service_account',client_email:email,private_key:raw.replace(/\\n/g,'\n')};
-      if(!key.client_email&&email)key.client_email=email;
-      if(!project)throw new Error('Missing GEE project ID');
-      ee.data.authenticateViaPrivateKey(key,
-        ()=>ee.initialize(null,null,()=>resolve(),(e:any)=>reject(new Error(String(e))),null,project),
-        (e:any)=>reject(new Error(String(e)))
-      );
-    }catch(e:any){reject(e)}
-  });
-}
 function evaluate(obj:any){return new Promise<any>((resolve,reject)=>obj.evaluate((v:any,e:any)=>e?reject(new Error(String(e))):resolve(v)))}
 function aoiFC(fc:any){return ee.FeatureCollection((fc?.features||[]).map((f:any)=>ee.Feature(ee.Geometry(f.geometry),f.properties||{})))}
 function maskS2(img:any){
@@ -63,15 +44,13 @@ function finite(v:any){return v!==null&&v!==undefined&&v!==''&&Number.isFinite(N
 
 export async function POST(req:NextRequest){
   try{
-    try{process.chdir('/tmp')}catch{}
-    loadEE();
+    ee=await getEarthEngine();
     const p=await req.json();
     if(!p?.aoi?.features?.length)return NextResponse.json({status:'error',note:'AOI required'},{status:400});
     const start=String(p.start||'2024-01-01'),end=String(p.end||'2026-09-19');
     const ps=periods(start,end);
     if(!ps.length)return NextResponse.json({status:'error',note:'Invalid date range'},{status:400});
-    await initEE();
-    const geom=aoiFC(p.aoi).geometry();
+        const geom=aoiFC(p.aoi).geometry();
     const areaHa=Number(await evaluate(geom.area(1).divide(10000)));
     const simplifyMeters=areaHa>1000000?250:(areaHa>250000?150:(areaHa>50000?75:30));
     const statGeom=geom.simplify(simplifyMeters);
