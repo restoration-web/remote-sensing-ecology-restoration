@@ -111,8 +111,8 @@ function classified(img:any,thresholds:number[]){
   thresholds.forEach((t,i)=>{cls=cls.where(img.gt(t),i+2)});
   return cls.rename('class').updateMask(img.mask());
 }
-async function thumb(img:any,geom:any,palette:string[],min:number,max:number,dimensions:number){
-  return img.getThumbURL({region:geom.bounds(100),dimensions,format:'png',min,max,palette});
+async function thumb(img:any,geom:any,dimensions:number){
+  return img.getThumbURL({region:geom.bounds(100),dimensions,format:'png'});
 }
 async function areaByClass(cls:any,geom:any,scale:number){
   const grouped=ee.Image.pixelArea().divide(10000).rename('ha').addBands(cls).reduceRegion({
@@ -144,10 +144,18 @@ export async function POST(req:NextRequest){
   const stats=await evalEE(img.reduceRegion({reducer:ee.Reducer.mean().combine({reducer2:ee.Reducer.stdDev(),sharedInputs:true}).combine({reducer2:ee.Reducer.percentile([20,40,60,80]),sharedInputs:true}),geometry:statGeom,scale,maxPixels:5e7,bestEffort:true,tileScale:8}));
   const thresholds=isModel?[.2,.4,.6,.8]:[stats.value_p20,stats.value_p40,stats.value_p60,stats.value_p80].map(Number);
   if(thresholds.some((x:number)=>!Number.isFinite(x)))throw new Error('Insufficient valid pixels for classification');
+  // Statistics may use a simplified geometry, but cartographic output must respect
+  // the exact uploaded AOI boundary. Re-clip and re-mask with the original geometry.
   const cls=classified(img,thresholds);
+  const displayMask=ee.Image.constant(1).clip(geom).selfMask();
+  const displayCls=cls.clip(geom).updateMask(displayMask);
   const palette=isModel?palettes.risk:(layer==='LST'?palettes.temp:palettes.index);
+  const visual=displayCls.visualize({min:1,max:5,palette}).updateMask(displayMask).clip(geom);
   const thumbDimensions=areaHa>1000000?512:(areaHa>250000?640:900);
-  const [imageUrl,classArea]=await Promise.all([thumb(cls,statGeom,palette,1,5,thumbDimensions),areaByClass(cls,statGeom,scale)]);
+  const [imageUrl,classArea]=await Promise.all([
+    thumb(visual,geom,thumbDimensions),
+    areaByClass(displayCls,geom,scale)
+  ]);
   const labels=isModel?['Very Low','Low','Moderate','High','Very High']:['Very Low','Low','Moderate','High','Very High'];
   const legend=labels.map((label,i)=>({class:i+1,label,color:palette[i],min:i===0?null:thresholds[i-1],max:i===4?null:thresholds[i]}));
   return NextResponse.json({
@@ -159,7 +167,7 @@ export async function POST(req:NextRequest){
      weights:layer==='FLOOD'?{lowElevation:.35,lowSlope:.25,rainfall:.25,lowNDVI:.15}:layer==='LANDSLIDE'?{slope:.45,rainfall:.30,elevation:.10,lowNDVI:.15}:{slope:.45,rainfall:.30,lowNDVI:.25},
      validation:'Not locally validated'
    }:{type:'relative AOI quintile visualization',classes:'P20/P40/P60/P80',validation:'Spectral index; no local ecological threshold implied'},
-   provenance:{analysisVersion:'GEOECO-ENGINE-1.2.1',dataset:layer==='LST'?'Landsat 8/9 Collection 2 Level-2':isModel?'SRTM + CHIRPS + Sentinel-2':'Sentinel-2 SR Harmonized',start,end,scale,areaHa,simplifyMeters,scalePolicy:'adaptive-by-AOI-area',compositePolicy:'annual-median then multi-year median',thumbDimensions}
+   provenance:{analysisVersion:'GEOECO-ENGINE-1.2.1',dataset:layer==='LST'?'Landsat 8/9 Collection 2 Level-2':isModel?'SRTM + CHIRPS + Sentinel-2':'Sentinel-2 SR Harmonized',start,end,scale,areaHa,simplifyMeters,scalePolicy:'adaptive-by-AOI-area',compositePolicy:'annual-median then multi-year median',displayClip:'exact uploaded AOI geometry',thumbDimensions}
   });
  }catch(e:any){return NextResponse.json({status:'error',note:e?.message||String(e)},{status:500})}
 }
