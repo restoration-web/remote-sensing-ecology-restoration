@@ -3,7 +3,7 @@ import {NextRequest,NextResponse} from 'next/server';
 export const runtime='nodejs';
 export const maxDuration=300;
 
-try{process.chdir('/tmp')}catch{}\nconst ee=require('@google/earthengine');
+const ee=require('@google/earthengine');
 
 function initEarthEngine(){
   return new Promise<void>((resolve,reject)=>{
@@ -112,6 +112,7 @@ function landsatCollection(start:string,end:string,aoi:any){
 
 export async function POST(req:NextRequest){
   try{
+    try{process.chdir('/tmp')}catch{}
     const payload=await req.json();
     if(!payload?.aoi || payload.aoi?.type!=='FeatureCollection' || !Array.isArray(payload.aoi?.features) || payload.aoi.features.length===0){
       return NextResponse.json({status:'AOI required',note:'Upload a non-empty Shapefile/GeoJSON FeatureCollection before running analysis.'},{status:400});
