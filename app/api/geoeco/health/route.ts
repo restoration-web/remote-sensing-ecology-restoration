@@ -2,7 +2,8 @@ import {NextResponse} from 'next/server';
 
 export const runtime='nodejs';
 export const maxDuration=60;
-const ee=require('@google/earthengine');
+let ee:any;
+function loadEE(){if(!ee)ee=require('@google/earthengine');return ee;}
 
 function initEE(){
   return new Promise<void>((resolve,reject)=>{
@@ -28,6 +29,7 @@ function evaluate(obj:any){return new Promise<any>((resolve,reject)=>obj.evaluat
 export async function GET(){
   try{
     try{process.chdir('/tmp')}catch{}
+    loadEE();
     await initEE();
     const geom=ee.Geometry.Rectangle([114.55,-3.45,114.65,-3.35]);
     const col=ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED')
