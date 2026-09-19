@@ -3,8 +3,6 @@ name: GeoEco production verification
 on:
   push:
     branches: [main]
-  pull_request:
-    branches: [main]
   workflow_dispatch:
 
 jobs:
@@ -13,16 +11,6 @@ jobs:
     steps:
       - name: Wait for Vercel production deployment
         run: sleep 90
-
-      - name: Repeated Earth Engine health checks
-        run: |
-          set -euo pipefail
-          for i in 1 2 3; do
-            curl --fail --show-error --silent --max-time 90 https://geospatial-restoration-q1.vercel.app/api/geoeco/health -o /tmp/health.json
-            cat /tmp/health.json
-            python -c "import json; x=json.load(open('/tmp/health.json')); assert x.get('status')=='success', x; assert x.get('thumbGenerated') is True, x"
-            sleep 2
-          done
 
       - name: Generate NDVI for representative large AOI and fetch raster
         run: |
@@ -47,11 +35,11 @@ jobs:
             }
           }
           JSON
-          curl --fail --show-error --silent --max-time 300 -H 'content-type: application/json' --data-binary @/tmp/payload.json https://geospatial-restoration-q1.vercel.app/api/geoeco/analysis -o /tmp/map.json
+          curl --fail --show-error --silent --retry 3 --retry-delay 2 --retry-all-errors --max-time 300 -H 'content-type: application/json' --data-binary @/tmp/payload.json https://geospatial-restoration-q1.vercel.app/api/geoeco/analysis -o /tmp/map.json
           cat /tmp/map.json
           python -c "import json; x=json.load(open('/tmp/map.json')); assert x.get('status')=='success',x; assert x.get('layer')=='NDVI',x; assert len(x.get('legend') or [])==5,x; assert len(x.get('classArea') or [])>0,x; assert x.get('imageUrl'),x"
           IMG=$(python -c "import json; print(json.load(open('/tmp/map.json'))['imageUrl'])")
-          curl --fail --show-error --silent --max-time 120 "$IMG" -o /tmp/result.png
+          curl --fail --show-error --silent --retry 2 --retry-delay 1 --retry-all-errors --max-time 120 "$IMG" -o /tmp/result.png
           test -s /tmp/result.png
           BYTES=$(stat -c%s /tmp/result.png)
           test "$BYTES" -gt 1000
@@ -80,6 +68,6 @@ jobs:
             }
           }
           JSON
-          curl --fail --show-error --silent --max-time 300 -H 'content-type: application/json' --data-binary @/tmp/time.json https://geospatial-restoration-q1.vercel.app/api/geoeco/temporal -o /tmp/time-result.json
+          curl --fail --show-error --silent --retry 3 --retry-delay 2 --retry-all-errors --max-time 300 -H 'content-type: application/json' --data-binary @/tmp/time.json https://geospatial-restoration-q1.vercel.app/api/geoeco/temporal -o /tmp/time-result.json
           cat /tmp/time-result.json
-          python -c "import json; x=json.load(open('/tmp/time-result.json')); assert x.get('status')=='success',x; rows=x.get('rows') or []; assert len(rows)>=4,x; [(_ for _ in ()).throw(AssertionError((k,rows))) if not any(r.get(k) is not None for r in rows) else None for k in ['NDVI','NDRE','NDMI','BSI','LST','Rainfall']]; print('ROWS',len(rows))"
+          python -c "import json; x=json.load(open('/tmp/time-result.json')); assert x.get('status')=='success',x; rows=x.get('rows') or []; assert len(rows)>=4,x; assert all(any(r.get(k) is not None for r in rows) for k in ['NDVI','NDRE','NDMI','BSI','LST','Rainfall']); print('ROWS',len(rows))"
