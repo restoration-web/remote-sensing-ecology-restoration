@@ -172,7 +172,7 @@ function StatisticsPage({temporal,aoi,start,end,run,running}:any){
    <section className={styles.card}>
     <div className={styles.sectionHead}><div><h2>Statistics & Models</h2><p>Upload an AOI and run an analysis first. This page will then populate automatically from the same analysis object used for the maps.</p></div><span className={styles.pill}>Awaiting AOI</span></div>
     <div className={styles.statsFeatureGrid}>
-     {['Descriptive statistics','Correlation matrix','Bivariate regression','Scatterplots','Temporal trajectories','Model metrics','Annual data table','Reproducibility fingerprint'].map(x=><div key={x}><b>{x}</b><span>Generated from the declared AOI and period.</span></div>)}
+     {['Descriptive statistics','Correlation matrix','Bivariate regression','Scatterplots','Temporal trajectories','Model metrics','Quarterly data table','Reproducibility fingerprint'].map(x=><div key={x}><b>{x}</b><span>Generated from the declared AOI and period.</span></div>)}
     </div>
    </section>
   </div>
@@ -186,7 +186,7 @@ function StatisticsPage({temporal,aoi,start,end,run,running}:any){
     <div className={styles.sectionHead}><div><h2>Statistics & Models</h2><p>No completed temporal analysis is available yet for the current AOI.</p></div><button onClick={()=>run()}>Run Full Analysis</button></div>
     {temporal?.note&&<div className={styles.errorBox}>{temporal.note}</div>}
     <div className={styles.statsFeatureGrid}>
-     {['NDVI–NDMI correlation','NDVI–BSI regression','NDVI–LST regression','NDVI–Rainfall relationship','NDMI–LST relationship','BSI–LST relationship','Descriptive statistics','Annual observation table'].map(x=><div key={x}><b>{x}</b><span>Available after processing.</span></div>)}
+     {['NDVI–NDMI correlation','NDVI–BSI regression','NDVI–LST regression','NDVI–Rainfall relationship','NDMI–LST relationship','BSI–LST relationship','Descriptive statistics','Quarterly observation table'].map(x=><div key={x}><b>{x}</b><span>Available after processing.</span></div>)}
     </div>
    </section>
   </div>
@@ -211,7 +211,7 @@ function TemporalDashboard({temporal,aoi,start,end}:any){
  const id='GEOECO-'+hashString(JSON.stringify({aoi:aoi?.geometry,start,end})).toUpperCase();
  return <div className={styles.analyticsStack}>
   <section className={styles.card}>
-   <div className={styles.sectionHead}><div><h2>Temporal trajectories</h2><p>Annual AOI means from the same declared period. Analysis fingerprint: <b>{id}</b></p></div><span className={styles.pill}>{rows.length} annual records</span></div>
+   <div className={styles.sectionHead}><div><h2>Temporal trajectories</h2><p>Quarterly AOI means from the same declared period. Analysis fingerprint: <b>{id}</b></p></div><span className={styles.pill}>{rows.length} quarterly records</span></div>
    <div className={styles.grid2}>
     <div><h3>Vegetation & moisture indices</h3><SimpleLineChart rows={rows} keys={['NDVI','NDRE','EVI','SAVI','NDMI','BSI']}/></div>
     <div><h3>Thermal & rainfall drivers</h3><SimpleLineChart rows={rows} keys={['LST']}/><SimpleLineChart rows={rows} keys={['Rainfall']}/></div>
