@@ -2,7 +2,8 @@ import {NextRequest,NextResponse} from 'next/server';
 
 export const runtime='nodejs';
 export const maxDuration=300;
-const ee=require('@google/earthengine');
+let ee:any;
+function loadEE(){if(!ee)ee=require('@google/earthengine');return ee;}
 
 function initEE(){
   return new Promise<void>((resolve,reject)=>{
@@ -116,6 +117,7 @@ const palettes={
 export async function POST(req:NextRequest){
  try{
   try{process.chdir('/tmp')}catch{}
+  loadEE();
   const p=await req.json();
   if(!p?.aoi?.features?.length)return NextResponse.json({status:'error',note:'AOI required'},{status:400});
   await initEE();
