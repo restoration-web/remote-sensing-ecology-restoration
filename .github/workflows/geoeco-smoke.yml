@@ -113,3 +113,5 @@ for k in needed:
 assert x.get('provenance',{}).get('spectralScale',0)>=90,x
 print("Rows:",len(rows))
 PY
+
+# verification trigger
