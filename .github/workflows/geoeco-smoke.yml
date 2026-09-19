@@ -49,14 +49,13 @@ jobs:
           echo
           test "$HTTP" = "200"
 
-      - name: Diagnose temporal statistics
+      - name: Diagnose GeoEco temporal statistics
         run: |
           set -u
           cat >/tmp/time.json <<'JSON'
           {
-            "period":{"start":2024,"end":2026},
-            "sensor":"Landsat 5/7/8/9",
-            "variables":["NDVI","EVI","SAVI","NDMI","NDWI","BSI","LST","Rainfall"],
+            "start":"2024-01-01",
+            "end":"2026-09-19",
             "aoiName":"Smoke AOI",
             "aoi":{
               "type":"FeatureCollection",
@@ -73,7 +72,7 @@ jobs:
             }
           }
           JSON
-          HTTP=$(curl --show-error --silent --max-time 240 -w '%{http_code}'             -H 'content-type: application/json'             --data-binary @/tmp/time.json             https://geospatial-restoration-q1.vercel.app/api/analyze             -o /tmp/time-result.json || true)
+          HTTP=$(curl --show-error --silent --max-time 240 -w '%{http_code}'             -H 'content-type: application/json'             --data-binary @/tmp/time.json             https://geospatial-restoration-q1.vercel.app/api/geoeco/temporal             -o /tmp/time-result.json || true)
           echo "HTTP=$HTTP"
           echo "BODY:"
           cat /tmp/time-result.json || true
