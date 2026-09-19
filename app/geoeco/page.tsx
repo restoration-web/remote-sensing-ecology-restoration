@@ -78,9 +78,9 @@ export default function GeoEco(){
  async function runFire(){
   if(!aoi?.geometry){setFire({status:'error',note:'Upload AOI before hotspot analysis.'});return;}
   setFireRunning(true);setFire({status:'running',note:'Loading NASA FIRMS / VIIRS hotspots…'});
-  const data=await fetchJsonWithRetry('/api/geoeco/fire',{
+  const data=await fetchJsonWithRetry('/api/geoeco_engine',{
    method:'POST',headers:{'Content-Type':'application/json'},
-   body:JSON.stringify({aoi:aoi.geometry,end,days:7,responseWindowMinutes:60})
+   body:JSON.stringify({action:'fire',aoi:aoi.geometry,end,days:7,responseWindowMinutes:60})
   },3);
   setFire(data);setFireRunning(false);
  }
