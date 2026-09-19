@@ -63,9 +63,9 @@ export default function GeoEco(){
    setLayer(target);setRunning(true);setResult({status:'running',note:'Processing '+target+' in Google Earth Engine…'});
    try{
      setTemporal({status:'running',note:'Waiting for map result before spatial statistics…'});
-     const data=await fetchJsonWithRetry('/api/geoeco/analysis',{
+     const data=await fetchJsonWithRetry('/api/geoeco_engine',{
        method:'POST',headers:{'Content-Type':'application/json'},
-       body:JSON.stringify({aoi:aoi.geometry,start,end,layer:target})
+       body:JSON.stringify({action:'map',aoi:aoi.geometry,start,end,layer:target})
      },3);
      setResult(data);
      if(data?.status!=='success'){
@@ -74,7 +74,7 @@ export default function GeoEco(){
      }
      const timeData=await fetchJsonWithRetry('/api/geoeco/temporal',{
        method:'POST',headers:{'Content-Type':'application/json'},
-       body:JSON.stringify({start,end,aoi:aoi.geometry,aoiName:aoi.name})
+       body:JSON.stringify({action:'stats',start,end,aoi:aoi.geometry,aoiName:aoi.name})
      },3);
      setTemporal(timeData);
    }catch(e:any){
