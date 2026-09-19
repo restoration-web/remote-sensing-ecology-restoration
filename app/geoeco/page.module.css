@@ -19,3 +19,11 @@
 
 .histGrid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.histCard{border:1px solid #e1e8e5;background:#fbfcfc;border-radius:12px;padding:12px;min-height:180px}.histBars{height:120px;display:flex;align-items:flex-end;gap:3px;border-bottom:1px solid #c9d5d0;padding:0 2px}.histBars div{flex:1;min-width:3px;background:#2f8069;border-radius:3px 3px 0 0;opacity:.88}.histAxis{display:flex;justify-content:space-between;font-size:9px;color:#74817c;margin-top:5px}.metricStrip{display:flex;gap:8px;flex-wrap:wrap;margin:8px 0 14px}.metricStrip span{background:#eef5f2;border:1px solid #dbe8e2;border-radius:999px;padding:7px 10px;font-size:10px;color:#66766f}.metricStrip b{color:#163f33}.analyticsStack{display:flex;flex-direction:column;gap:16px}
 @media(max-width:1000px){.histGrid{grid-template-columns:repeat(2,1fr)}}@media(max-width:650px){.histGrid{grid-template-columns:1fr}}
+
+.mapControls{display:grid;grid-template-columns:1.2fr repeat(3,auto) 1.2fr;gap:12px;align-items:end;background:#fff;border:1px solid #dde6e2;border-radius:14px;padding:12px 14px}
+.mapControls label{display:flex;flex-direction:column;gap:5px;font-size:10px;font-weight:800;color:#52635c}
+.mapControls select,.mapControls input[type=range]{width:100%}.mapControls select{border:1px solid #d6e0dc;border-radius:8px;padding:8px;background:#fbfcfc;color:#213b33}
+.checkControl{flex-direction:row!important;align-items:center!important;gap:6px!important;white-space:nowrap}.checkControl input{accent-color:#176b54}
+.fireMetricGrid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}.fireMetricGrid .metric{min-height:88px}
+@media(max-width:1000px){.mapControls{grid-template-columns:repeat(2,1fr)}.fireMetricGrid{grid-template-columns:repeat(2,1fr)}}
+@media(max-width:650px){.mapControls{grid-template-columns:1fr}.fireMetricGrid{grid-template-columns:1fr}.checkControl{white-space:normal}}
