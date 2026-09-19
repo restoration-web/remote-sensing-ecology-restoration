@@ -11,6 +11,16 @@ type MapResult={
  classArea?:Array<{class:number;areaHa:number}>;
  methodology?:any;provenance?:any;
 };
+type FireResult={
+ status:string;note?:string;source?:string;points?:any[];daily?:any[];summary?:any;
+ goldenTime?:any;spreadProxy?:any;vegetationContext?:any;provenance?:any;scientificNote?:string;
+};
+const basemaps:any={
+ OSM:{name:'OpenStreetMap',url:'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',attribution:'© OpenStreetMap contributors'},
+ Satellite:{name:'Esri Satellite',url:'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',attribution:'Tiles © Esri'},
+ Topo:{name:'OpenTopoMap',url:'https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png',attribution:'© OpenTopoMap'},
+ Light:{name:'Carto Light',url:'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',attribution:'© OpenStreetMap © CARTO'}
+};
 
 async function safeJson(res:Response){
  const text=await res.text();
@@ -56,7 +66,24 @@ export default function GeoEco(){
  const [running,setRunning]=useState(false);
  const [perspective,setPerspective]=useState(false);
  const [temporal,setTemporal]=useState<any>(null);
+ const [fire,setFire]=useState<FireResult|null>(null);
+ const [fireRunning,setFireRunning]=useState(false);
+ const [basemap,setBasemap]=useState('OSM');
+ const [showAOI,setShowAOI]=useState(true);
+ const [showRaster,setShowRaster]=useState(true);
+ const [showHotspots,setShowHotspots]=useState(true);
+ const [rasterOpacity,setRasterOpacity]=useState(.88);
  const selected=useMemo(()=>layers.find(x=>x.id===layer)!,[layer]);
+
+ async function runFire(){
+  if(!aoi?.geometry){setFire({status:'error',note:'Upload AOI before hotspot analysis.'});return;}
+  setFireRunning(true);setFire({status:'running',note:'Loading NASA FIRMS / VIIRS hotspots…'});
+  const data=await fetchJsonWithRetry('/api/geoeco/fire',{
+   method:'POST',headers:{'Content-Type':'application/json'},
+   body:JSON.stringify({aoi:aoi.geometry,end,days:7,responseWindowMinutes:60})
+  },3);
+  setFire(data);setFireRunning(false);
+ }
 
  async function run(target=layer){
    if(!aoi?.geometry){setResult({status:'error',note:'Upload GeoJSON or zipped Shapefile before running analysis.'});return;}
@@ -87,19 +114,20 @@ export default function GeoEco(){
  return <main className={styles.shell}>
   <aside className={styles.sidebar}>
    <div><div className={styles.brand}>GeoEco AI</div><div className={styles.tag}>Geospatial Environmental Intelligence</div></div>
-   <nav className={styles.nav}>{['Dashboard','Analysis','Statistics & Models','Scientific Library','Help'].map(x=><button key={x} className={tab===x?styles.active:''} onClick={()=>setTab(x)}>{x}</button>)}</nav>
+   <nav className={styles.nav}>{['Dashboard','Analysis','Statistics & Models','Fire Intelligence','Scientific Library','Help'].map(x=><button key={x} className={tab===x?styles.active:''} onClick={()=>setTab(x)}>{x}</button>)}</nav>
    <div className={styles.sideFoot}>Engine v1.2<br/><span>Classified maps + provenance</span></div>
   </aside>
 
   <section className={styles.content}>
    <header className={styles.header}>
     <div><div className={styles.kicker}>SCIENTIFIC WEB-GIS</div><h1>{tab}</h1><p>Classified thematic maps, legends, class-area statistics, transparent model assumptions, and reproducible provenance.</p></div>
-    <div className={styles.actions}>{tab==='Analysis'&&<button className={styles.secondary} onClick={()=>setPerspective(v=>!v)}>{perspective?'2D View':'Perspective View'}</button>}<button disabled={running} onClick={()=>run()}>{running?'Running…':tab==='Statistics & Models'?'Run Full Analysis':'Run '+selected.name}</button></div>
+    <div className={styles.actions}>{tab==='Analysis'&&<button className={styles.secondary} onClick={()=>setPerspective(v=>!v)}>{perspective?'2D View':'Perspective View'}</button>}{tab==='Fire Intelligence'?<button disabled={fireRunning} onClick={runFire}>{fireRunning?'Loading FIRMS…':'Analyze Hotspots'}</button>:<button disabled={running} onClick={()=>run()}>{running?'Running…':tab==='Statistics & Models'?'Run Full Analysis':'Run '+selected.name}</button>}</div>
    </header>
 
    {tab==='Dashboard'&&<Dashboard result={result} selected={selected}/>}
-   {tab==='Analysis'&&<AnalysisWorkspace aoi={aoi} setAoi={setAoi} start={start} setStart={setStart} end={end} setEnd={setEnd} layer={layer} setLayer={setLayer} result={result} temporal={temporal} run={run} running={running} perspective={perspective}/>}
+   {tab==='Analysis'&&<AnalysisWorkspace aoi={aoi} setAoi={setAoi} start={start} setStart={setStart} end={end} setEnd={setEnd} layer={layer} setLayer={setLayer} result={result} temporal={temporal} run={run} running={running} perspective={perspective} basemap={basemap} setBasemap={setBasemap} showAOI={showAOI} setShowAOI={setShowAOI} showRaster={showRaster} setShowRaster={setShowRaster} showHotspots={showHotspots} setShowHotspots={setShowHotspots} rasterOpacity={rasterOpacity} setRasterOpacity={setRasterOpacity} fire={fire}/>}
    {tab==='Statistics & Models'&&<StatisticsPage temporal={temporal} aoi={aoi} start={start} end={end} run={run} running={running}/>}
+   {tab==='Fire Intelligence'&&<FirePage aoi={aoi} fire={fire} runFire={runFire} fireRunning={fireRunning} result={result} basemap={basemap} setBasemap={setBasemap} showAOI={showAOI} setShowAOI={setShowAOI} showRaster={showRaster} setShowRaster={setShowRaster} showHotspots={showHotspots} setShowHotspots={setShowHotspots} rasterOpacity={rasterOpacity} setRasterOpacity={setRasterOpacity}/>}
    {tab==='Scientific Library'&&<ScientificLibrary layer={layer} setLayer={setLayer}/>}
    {tab==='Help'&&<Help/>}
   </section>
@@ -122,19 +150,20 @@ function Dashboard({result,selected}:any){
 }
 
 function AnalysisWorkspace(props:any){
- const {aoi,setAoi,start,setStart,end,setEnd,layer,setLayer,result,temporal,run,running,perspective}=props;
+ const {aoi,setAoi,start,setStart,end,setEnd,layer,setLayer,result,temporal,run,running,perspective,basemap,setBasemap,showAOI,setShowAOI,showRaster,setShowRaster,showHotspots,setShowHotspots,rasterOpacity,setRasterOpacity,fire}=props;
  return <div className={styles.analysisLayout}>
   <section className={styles.controlBar}>
    <AOIUploader aoi={aoi} setAoi={setAoi}/>
    <label className={styles.compactLabel}>Start<input type="date" value={start} onChange={e=>setStart(e.target.value)}/></label>
    <label className={styles.compactLabel}>End<input type="date" value={end} onChange={e=>setEnd(e.target.value)}/></label>
   </section>
+  <MapDisplayControls basemap={basemap} setBasemap={setBasemap} showAOI={showAOI} setShowAOI={setShowAOI} showRaster={showRaster} setShowRaster={setShowRaster} showHotspots={showHotspots} setShowHotspots={setShowHotspots} rasterOpacity={rasterOpacity} setRasterOpacity={setRasterOpacity}/>
 
   <div className={styles.layerTabs}>{layers.map(x=><button key={x.id} className={layer===x.id?styles.layerActive:''} onClick={()=>setLayer(x.id)}><b>{x.name}</b><span>{x.group}</span></button>)}</div>
 
   <section className={styles.mapResultCard}>
    <div className={styles.mapTitleRow}><div><h2>{layers.find((x:any)=>x.id===layer)?.name}</h2><p>{layers.find((x:any)=>x.id===layer)?.desc}</p></div><button disabled={running} onClick={()=>run(layer)}>{running?'Processing…':'Generate Map'}</button></div>
-   <GeoMap aoi={aoi} result={result?.layer===layer?result:null} perspective={perspective}/>
+   <GeoMap aoi={aoi} result={result?.layer===layer?result:null} perspective={perspective} basemap={basemap} showAOI={showAOI} showRaster={showRaster} rasterOpacity={rasterOpacity} hotspots={showHotspots?(fire?.points||[]):[]}/>
    {result?.status==='running'&&<div className={styles.processing}>{result.note}</div>}
    {result?.status==='error'&&<div className={styles.errorBox}>{result.note}</div>}
   </section>
@@ -154,23 +183,69 @@ function AnalysisWorkspace(props:any){
  </div>
 }
 
-function GeoMap({aoi,result,perspective}:{aoi:AOI;result:MapResult|null;perspective:boolean}){
- const el=useRef<HTMLDivElement>(null),mapRef=useRef<any>(null),aoiLayer=useRef<any>(null),imgLayer=useRef<any>(null);
+
+function MapDisplayControls({basemap,setBasemap,showAOI,setShowAOI,showRaster,setShowRaster,showHotspots,setShowHotspots,rasterOpacity,setRasterOpacity}:any){
+ return <section className={styles.mapControls}>
+  <label>Basemap<select value={basemap} onChange={e=>setBasemap(e.target.value)}>{Object.entries(basemaps).map(([k,v]:any)=><option key={k} value={k}>{v.name}</option>)}</select></label>
+  <label className={styles.checkControl}><input type="checkbox" checked={showAOI} onChange={e=>setShowAOI(e.target.checked)}/> AOI boundary</label>
+  <label className={styles.checkControl}><input type="checkbox" checked={showRaster} onChange={e=>setShowRaster(e.target.checked)}/> Analysis raster</label>
+  <label className={styles.checkControl}><input type="checkbox" checked={showHotspots} onChange={e=>setShowHotspots(e.target.checked)}/> NASA hotspots</label>
+  <label>Raster opacity<input type="range" min="0.25" max="1" step="0.05" value={rasterOpacity} onChange={e=>setRasterOpacity(Number(e.target.value))}/></label>
+ </section>
+}
+
+function FirePage({aoi,fire,runFire,fireRunning,result,basemap,setBasemap,showAOI,setShowAOI,showRaster,setShowRaster,showHotspots,setShowHotspots,rasterOpacity,setRasterOpacity}:any){
+ return <div className={styles.analysisLayout}>
+  <MapDisplayControls basemap={basemap} setBasemap={setBasemap} showAOI={showAOI} setShowAOI={setShowAOI} showRaster={showRaster} setShowRaster={setShowRaster} showHotspots={showHotspots} setShowHotspots={setShowHotspots} rasterOpacity={rasterOpacity} setRasterOpacity={setRasterOpacity}/>
+  <section className={styles.mapResultCard}>
+   <div className={styles.mapTitleRow}><div><h2>NASA FIRMS Fire Intelligence</h2><p>VIIRS 375 m near-real-time active fire detections clipped to the uploaded AOI.</p></div><button disabled={fireRunning} onClick={runFire}>{fireRunning?'Loading…':'Refresh Hotspots'}</button></div>
+   <GeoMap aoi={aoi} result={showRaster?result:null} perspective={false} basemap={basemap} showAOI={showAOI} showRaster={showRaster} rasterOpacity={rasterOpacity} hotspots={showHotspots?(fire?.points||[]):[]}/>
+   {fire?.status==='error'&&<div className={styles.errorBox}>{fire.note}</div>}
+  </section>
+  {fire?.status==='success'&&<>
+   <div className={styles.fireMetricGrid}>
+    <Metric label="Hotspot pixels" value={String(fire.summary?.count??0)}/>
+    <Metric label="Mean FRP" value={isFiniteValue(fire.summary?.frpMean)?nfmt(fire.summary.frpMean,1)+' MW':'NA'}/>
+    <Metric label="Max FRP" value={isFiniteValue(fire.summary?.frpMax)?nfmt(fire.summary.frpMax,1)+' MW':'NA'}/>
+    <Metric label="High confidence" value={String(fire.summary?.highConfidenceCount??0)}/>
+   </div>
+   <div className={styles.grid2}>
+    <section className={styles.card}><h2>Vegetation context at hotspot pixels</h2><div className={styles.statsGrid}>
+     <div><span>Mean NDVI</span><b>{nfmt(fire.vegetationContext?.NDVI_mean)}</b></div>
+     <div><span>Mean NDMI</span><b>{nfmt(fire.vegetationContext?.NDMI_mean)}</b></div>
+     <div><span>Mean BSI</span><b>{nfmt(fire.vegetationContext?.BSI_mean)}</b></div>
+     <div><span>NDVI SD</span><b>{nfmt(fire.vegetationContext?.NDVI_stdDev)}</b></div>
+    </div><div className={styles.notice}>This links fire detections to vegetation condition in the AOI. It is contextual association, not proof that an index caused ignition.</div></section>
+    <section className={styles.card}><h2>Golden time & observed spread</h2>
+     {fire.goldenTime?<div className={styles.kv}><div><span>Status</span><b>{fire.goldenTime.status}</b></div><div><span>Configured window</span><b>{fire.goldenTime.responseWindowMinutes} min</b></div><div><span>Elapsed since latest detection</span><b>{nfmt(fire.goldenTime.elapsedSinceLatestDetectionMinutes,0)} min</b></div></div>:<div className={styles.empty}>No recent detection.</div>}
+     {fire.spreadProxy?.available?<div className={styles.kv}><div><span>Centroid displacement</span><b>{nfmt(fire.spreadProxy.distanceKm,2)} km</b></div><div><span>Elapsed</span><b>{nfmt(fire.spreadProxy.elapsedHours,1)} h</b></div><div><span>Observed spread proxy</span><b>{nfmt(fire.spreadProxy.centroidDisplacementKmPerHour,3)} km/h</b></div></div>:<div className={styles.notice}>{fire.spreadProxy?.note}</div>}
+     <div className={styles.notice}>Golden time is a configurable operational response window. The spread value is a satellite-hotspot centroid displacement proxy, not physical flame-front rate of spread.</div>
+    </section>
+   </div>
+   <section className={styles.card}><h2>Hotspot table</h2><div className={styles.tableWrap}><table className={styles.dataTable}><thead><tr><th>Latitude</th><th>Longitude</th><th>FRP (MW)</th><th>Confidence</th><th>Brightness (K)</th><th>UTC epoch</th></tr></thead><tbody>{(fire.points||[]).slice(0,150).map((x:any,i:number)=><tr key={i}><td>{nfmt(x.lat,5)}</td><td>{nfmt(x.lon,5)}</td><td>{nfmt(x.frp,1)}</td><td>{x.confidence===2?'High':x.confidence===1?'Nominal':'Low'}</td><td>{nfmt(x.brightness,1)}</td><td>{x.epoch}</td></tr>)}</tbody></table></div><div className={styles.notice}>{fire.scientificNote}</div></section>
+  </>}
+ </div>
+}
+
+function GeoMap({aoi,result,perspective,basemap='OSM',showAOI=true,showRaster=true,rasterOpacity=.88,hotspots=[]}:{aoi:AOI;result:MapResult|null;perspective:boolean;basemap?:string;showAOI?:boolean;showRaster?:boolean;rasterOpacity?:number;hotspots?:any[]}){
+ const el=useRef<HTMLDivElement>(null),mapRef=useRef<any>(null),aoiLayer=useRef<any>(null),imgLayer=useRef<any>(null),baseLayer=useRef<any>(null),hotspotLayer=useRef<any>(null);
  const [overlayState,setOverlayState]=useState<'idle'|'loading'|'loaded'|'error'>('idle');
  useEffect(()=>{let dead=false;(async()=>{if(!el.current||mapRef.current)return;const L=await import('leaflet');if(dead||!el.current)return;
   const map=L.map(el.current,{zoomControl:true}).setView([-2.2,115.5],6);
-  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© OpenStreetMap contributors'}).addTo(map);
+  const bm=basemaps[basemap]||basemaps.OSM;
+  baseLayer.current=L.tileLayer(bm.url,{maxZoom:19,attribution:bm.attribution}).addTo(map);
   mapRef.current=map;setTimeout(()=>map.invalidateSize(),150);
  })();return()=>{dead=true;if(mapRef.current){mapRef.current.remove();mapRef.current=null}}},[]);
+ useEffect(()=>{let dead=false;(async()=>{const map=mapRef.current;if(!map)return;const L=await import('leaflet');if(dead)return;if(baseLayer.current)map.removeLayer(baseLayer.current);const bm=basemaps[basemap]||basemaps.OSM;baseLayer.current=L.tileLayer(bm.url,{maxZoom:19,attribution:bm.attribution}).addTo(map);baseLayer.current.bringToBack?.();})();return()=>{dead=true}},[basemap]);
  useEffect(()=>{let dead=false;(async()=>{const map=mapRef.current;if(!map)return;const L=await import('leaflet');if(dead)return;
   if(aoiLayer.current){map.removeLayer(aoiLayer.current);aoiLayer.current=null}
-  if(aoi?.geometry){const x=L.geoJSON(aoi.geometry,{style:{color:'#f7d154',weight:3,fillOpacity:0}}).addTo(map);aoiLayer.current=x;const b=x.getBounds();if(b.isValid())map.fitBounds(b.pad(.05),{maxZoom:14});}
- })();return()=>{dead=true}},[aoi]);
+  if(aoi?.geometry&&showAOI){const x=L.geoJSON(aoi.geometry,{style:{color:'#f7d154',weight:3,fillOpacity:0}}).addTo(map);aoiLayer.current=x;const b=x.getBounds();if(b.isValid())map.fitBounds(b.pad(.05),{maxZoom:14});}
+ })();return()=>{dead=true}},[aoi,showAOI]);
  useEffect(()=>{let dead=false;(async()=>{const map=mapRef.current;if(!map)return;const L=await import('leaflet');if(dead)return;
   if(imgLayer.current){map.removeLayer(imgLayer.current);imgLayer.current=null}
-  if(result?.imageUrl&&result.bounds){
+  if(showRaster&&result?.imageUrl&&result.bounds){
     setOverlayState('loading');
-    const overlay=L.imageOverlay(result.imageUrl,result.bounds,{opacity:.88,interactive:false,className:'geoeco-result-overlay'});
+    const overlay=L.imageOverlay(result.imageUrl,result.bounds,{opacity:rasterOpacity,interactive:false,className:'geoeco-result-overlay'});
     overlay.on('load',()=>setOverlayState('loaded'));
     overlay.on('error',()=>setOverlayState('error'));
     imgLayer.current=overlay.addTo(map);
@@ -180,7 +255,8 @@ function GeoMap({aoi,result,perspective}:{aoi:AOI;result:MapResult|null;perspect
   }else{
     setOverlayState('idle');
   }
- })();return()=>{dead=true}},[result]);
+ })();return()=>{dead=true}},[result,showRaster,rasterOpacity]);
+ useEffect(()=>{let dead=false;(async()=>{const map=mapRef.current;if(!map)return;const L=await import('leaflet');if(dead)return;if(hotspotLayer.current){map.removeLayer(hotspotLayer.current);hotspotLayer.current=null}if(hotspots?.length){const g=L.layerGroup();hotspots.forEach((h:any)=>{const c=h.confidence>=2?'#d7191c':h.confidence>=1?'#fdae61':'#ffffbf';L.circleMarker([h.lat,h.lon],{radius:5,color:'#7f0000',weight:1,fillColor:c,fillOpacity:.9}).bindPopup('FRP: '+Number(h.frp||0).toFixed(1)+' MW<br/>Confidence: '+(h.confidence===2?'High':h.confidence===1?'Nominal':'Low')).addTo(g)});g.addTo(map);hotspotLayer.current=g}})();return()=>{dead=true}},[hotspots]);
  return <div className={perspective?styles.perspectiveFrame:styles.flatFrame}><div ref={el} className={styles.realMap}/>{result?.legend&&<div className={styles.floatingLegend}><b>{result.layer}</b>{result.legend.map(x=><div key={x.class}><i style={{background:x.color}}></i><span>{x.label}</span></div>)}</div>}<div className={styles.overlayStatus} data-state={overlayState}>{overlayState==='loaded'?'Raster loaded':overlayState==='loading'?'Loading raster…':overlayState==='error'?'Raster failed to load':'Base map only'}</div></div>
 }
 
