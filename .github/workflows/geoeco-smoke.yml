@@ -66,15 +66,11 @@ print(x['imageUrl'])
 PY
 )
           curl --fail --show-error --silent --max-time 120 "$IMG" -o /tmp/result.png
-          python - <<'PY'
-from pathlib import Path
-p=Path('/tmp/result.png')
-assert p.stat().st_size > 1000,p.stat().st_size
-assert p.read_bytes()[:8] == b'PNG
-
-'
-print("PNG_BYTES",p.stat().st_size)
-PY
+          test -s /tmp/result.png
+          BYTES=$(stat -c%s /tmp/result.png)
+          test "$BYTES" -gt 1000
+          file /tmp/result.png | grep -q "PNG image data"
+          echo "PNG_BYTES=$BYTES"
 
       - name: Verify GeoEco statistics data for representative large AOI
         run: |
