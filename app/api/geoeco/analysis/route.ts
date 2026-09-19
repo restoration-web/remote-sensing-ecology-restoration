@@ -39,12 +39,42 @@ function maskS2(img:any){
   const mask=scl.neq(0).and(scl.neq(1)).and(scl.neq(3)).and(scl.neq(8)).and(scl.neq(9)).and(scl.neq(10)).and(scl.neq(11));
   return img.updateMask(mask).divide(10000).copyProperties(img,['system:time_start']);
 }
-function s2Composite(start:string,end:string,geom:any){
-  return ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED').filterDate(start,end).filterBounds(geom).filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE',30)).map(maskS2).median().clip(geom);
+function requiredBands(name:string){
+  if(name==='NDVI')return ['B8','B4','SCL'];
+  if(name==='NDRE')return ['B8A','B5','SCL'];
+  if(name==='NDWI')return ['B3','B8','SCL'];
+  if(name==='NDMI')return ['B8A','B11','SCL'];
+  return ['B11','B4','B8','B2','SCL'];
+}
+function maskedS2Selected(name:string,start:string,end:string,geom:any){
+  const bands=requiredBands(name);
+  return ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED')
+    .filterDate(start,end).filterBounds(geom)
+    .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE',30))
+    .select(bands)
+    .map((img:any)=>{
+      const scl=img.select('SCL');
+      const mask=scl.neq(0).and(scl.neq(1)).and(scl.neq(3)).and(scl.neq(8)).and(scl.neq(9)).and(scl.neq(10)).and(scl.neq(11));
+      return img.updateMask(mask).select(bands.filter((b:string)=>b!=='SCL')).divide(10000).copyProperties(img,['system:time_start']);
+    });
+}
+function s2AnnualComposite(name:string,start:string,end:string,geom:any){
+  const startYear=Number(start.slice(0,4)),endYear=Number(end.slice(0,4));
+  const years=ee.List.sequence(startYear,endYear);
+  const annual=ee.ImageCollection.fromImages(years.map((y:any)=>{
+    y=ee.Number(y);
+    const ys=ee.Date.fromYMD(y,1,1);
+    const ye=ys.advance(1,'year');
+    const c=maskedS2Selected(name,ys.format('YYYY-MM-dd'),ye.format('YYYY-MM-dd'),geom);
+    const emptyBands=requiredBands(name).filter((b:string)=>b!=='SCL');
+    const empty=ee.Image.constant(emptyBands.map(()=>0)).rename(emptyBands).updateMask(ee.Image.constant(0));
+    return ee.Image(ee.Algorithms.If(c.size().gt(0),c.median(),empty));
+  }));
+  return annual.median().clip(geom);
 }
 function indicatorImage(name:string,start:string,end:string,geom:any){
   if(['NDVI','NDRE','NDWI','NDMI','BSI'].includes(name)){
-    const s2=s2Composite(start,end,geom);
+    const s2=s2AnnualComposite(name,start,end,geom);
     if(name==='NDVI')return s2.normalizedDifference(['B8','B4']).rename('value');
     if(name==='NDRE')return s2.normalizedDifference(['B8A','B5']).rename('value');
     if(name==='NDWI')return s2.normalizedDifference(['B3','B8']).rename('value');
@@ -100,8 +130,8 @@ function classified(img:any,thresholds:number[]){
   thresholds.forEach((t,i)=>{cls=cls.where(img.gt(t),i+2)});
   return cls.rename('class').updateMask(img.mask());
 }
-async function thumb(img:any,geom:any,palette:string[],min:number,max:number){
-  return img.getThumbURL({region:geom.bounds(100),dimensions:900,format:'png',min,max,palette});
+async function thumb(img:any,geom:any,palette:string[],min:number,max:number,dimensions:number){
+  return img.getThumbURL({region:geom.bounds(100),dimensions,format:'png',min,max,palette});
 }
 async function areaByClass(cls:any,geom:any,scale:number){
   const grouped=ee.Image.pixelArea().divide(10000).rename('ha').addBands(cls).reduceRegion({
@@ -137,7 +167,8 @@ export async function POST(req:NextRequest){
   if(thresholds.some((x:number)=>!Number.isFinite(x)))throw new Error('Insufficient valid pixels for classification');
   const cls=classified(img,thresholds);
   const palette=isModel?palettes.risk:(layer==='LST'?palettes.temp:palettes.index);
-  const [imageUrl,classArea]=await Promise.all([thumb(cls,statGeom,palette,1,5),areaByClass(cls,statGeom,scale)]);
+  const thumbDimensions=areaHa>1000000?512:(areaHa>250000?640:900);
+  const [imageUrl,classArea]=await Promise.all([thumb(cls,statGeom,palette,1,5,thumbDimensions),areaByClass(cls,statGeom,scale)]);
   const labels=isModel?['Very Low','Low','Moderate','High','Very High']:['Very Low','Low','Moderate','High','Very High'];
   const legend=labels.map((label,i)=>({class:i+1,label,color:palette[i],min:i===0?null:thresholds[i-1],max:i===4?null:thresholds[i]}));
   return NextResponse.json({
@@ -149,7 +180,7 @@ export async function POST(req:NextRequest){
      weights:layer==='FLOOD'?{lowElevation:.35,lowSlope:.25,rainfall:.25,lowNDVI:.15}:layer==='LANDSLIDE'?{slope:.45,rainfall:.30,elevation:.10,lowNDVI:.15}:{slope:.45,rainfall:.30,lowNDVI:.25},
      validation:'Not locally validated'
    }:{type:'relative AOI quintile visualization',classes:'P20/P40/P60/P80',validation:'Spectral index; no local ecological threshold implied'},
-   provenance:{analysisVersion:'GEOECO-ENGINE-1.2.1',dataset:layer==='LST'?'Landsat 8/9 Collection 2 Level-2':isModel?'SRTM + CHIRPS + Sentinel-2':'Sentinel-2 SR Harmonized',start,end,scale,areaHa,simplifyMeters,scalePolicy:'adaptive-by-AOI-area'}
+   provenance:{analysisVersion:'GEOECO-ENGINE-1.2.1',dataset:layer==='LST'?'Landsat 8/9 Collection 2 Level-2':isModel?'SRTM + CHIRPS + Sentinel-2':'Sentinel-2 SR Harmonized',start,end,scale,areaHa,simplifyMeters,scalePolicy:'adaptive-by-AOI-area',compositePolicy:'annual-median then multi-year median',thumbDimensions}
   });
  }catch(e:any){return NextResponse.json({status:'error',note:e?.message||String(e)},{status:500})}
 }
