@@ -98,7 +98,8 @@ export default function GeoEco(){
    </header>
 
    {tab==='Dashboard'&&<Dashboard result={result} selected={selected}/>}
-   {tab==='Analysis'&&<AnalysisWorkspace aoi={aoi} setAoi={setAoi} start={start} setStart={setStart} end={end} setEnd={setEnd} layer={layer} setLayer={setLayer} result={result} run={run} running={running} perspective={perspective}/>}
+   {tab==='Analysis'&&<AnalysisWorkspace aoi={aoi} setAoi={setAoi} start={start} setStart={setStart} end={end} setEnd={setEnd} layer={layer} setLayer={setLayer} result={result} temporal={temporal} run={run} running={running} perspective={perspective}/>}
+   {tab==='Statistics & Models'&&<StatisticsPage temporal={temporal} aoi={aoi} start={start} end={end} run={run} running={running}/>}
    {tab==='Scientific Library'&&<ScientificLibrary layer={layer} setLayer={setLayer}/>}
    {tab==='Help'&&<Help/>}
   </section>
