@@ -47,3 +47,7 @@
 .histRect{fill:#4f8d79}.histCard svg{width:100%;height:auto;display:block}
 @media(max-width:900px){.publicationGrid{grid-template-columns:1fr}.publicationHeader{align-items:flex-start;flex-direction:column}.fireControls{grid-template-columns:1fr 1fr}}
 @media(max-width:650px){.fireControls{grid-template-columns:1fr}.publicationSheet{padding:10px}.coordLeft,.coordRight{display:none}}
+
+.hiddenFileInput{position:absolute!important;width:1px!important;height:1px!important;opacity:0!important;pointer-events:none!important}
+.fileButton{display:inline-flex;align-items:center;justify-content:center;width:max-content;min-width:130px;padding:9px 12px;border-radius:8px;background:#176b54;color:#fff;font-size:11px;font-weight:800;cursor:pointer}
+.fileButton:hover{background:#125944}
