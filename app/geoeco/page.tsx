@@ -62,14 +62,14 @@ export default function GeoEco(){
    if(!aoi?.geometry){setResult({status:'error',note:'Upload GeoJSON or zipped Shapefile before running analysis.'});return;}
    setLayer(target);setRunning(true);setResult({status:'running',note:'Processing '+target+' in Google Earth Engine…'});
    try{
-     setTemporal({status:'running',note:'Waiting for map result before temporal analysis…'});
+     setTemporal({status:'running',note:'Waiting for map result before spatial statistics…'});
      const data=await fetchJsonWithRetry('/api/geoeco/analysis',{
        method:'POST',headers:{'Content-Type':'application/json'},
        body:JSON.stringify({aoi:aoi.geometry,start,end,layer:target})
      },3);
      setResult(data);
      if(data?.status!=='success'){
-       setTemporal({status:'error',note:'Temporal analysis was not started because map generation failed.'});
+       setTemporal({status:'error',note:'Statistics were not started because map generation failed.'});
        return;
      }
      const timeData=await fetchJsonWithRetry('/api/geoeco/temporal',{
@@ -213,26 +213,133 @@ function StatisticsPage({temporal,aoi,start,end,run,running}:any){
    <section className={styles.card}>
     <div className={styles.sectionHead}><div><h2>Statistics & Models</h2><p>Upload an AOI and run an analysis first. This page will then populate automatically from the same analysis object used for the maps.</p></div><span className={styles.pill}>Awaiting AOI</span></div>
     <div className={styles.statsFeatureGrid}>
-     {['Descriptive statistics','Correlation matrix','Bivariate regression','Scatterplots','Temporal trajectories','Model metrics','Quarterly data table','Reproducibility fingerprint'].map(x=><div key={x}><b>{x}</b><span>Generated from the declared AOI and period.</span></div>)}
+     {['Descriptive statistics','Correlation matrix','Bivariate regression','Scatterplots','Distribution graphics','Model metrics','Sample data table','Reproducibility fingerprint'].map(x=><div key={x}><b>{x}</b><span>Generated from the declared AOI and period.</span></div>)}
     </div>
    </section>
   </div>
  }
  if(running||temporal?.status==='running'){
-  return <div className={styles.processing}>Calculating temporal statistics and models for the selected AOI…</div>
+  return <div className={styles.processing}>Calculating spatial statistics and models for the selected AOI…</div>
  }
  if(!temporal||temporal.status!=='success'){
   return <div className={styles.statsLanding}>
    <section className={styles.card}>
-    <div className={styles.sectionHead}><div><h2>Statistics & Models</h2><p>No completed temporal analysis is available yet for the current AOI.</p></div><button onClick={()=>run()}>Run Full Analysis</button></div>
+    <div className={styles.sectionHead}><div><h2>Statistics & Models</h2><p>No completed statistical analysis is available yet for the current AOI.</p></div><button onClick={()=>run()}>Run Full Analysis</button></div>
     {temporal?.note&&<div className={styles.errorBox}>{temporal.note}</div>}
     <div className={styles.statsFeatureGrid}>
-     {['NDVI–NDMI correlation','NDVI–BSI regression','NDVI–LST regression','NDVI–Rainfall relationship','NDMI–LST relationship','BSI–LST relationship','Descriptive statistics','Quarterly observation table'].map(x=><div key={x}><b>{x}</b><span>Available after processing.</span></div>)}
+     {['NDVI–NDMI correlation','NDVI–BSI regression','NDVI–LST regression','NDVI–Rainfall relationship','NDMI–LST relationship','BSI–LST relationship','Descriptive statistics','Sample observation table'].map(x=><div key={x}><b>{x}</b><span>Available after processing.</span></div>)}
     </div>
    </section>
   </div>
  }
- return <TemporalDashboard temporal={temporal} aoi={aoi} start={start} end={end}/>
+ return temporal?.mode==='spatial-sample'?<SpatialStatsDashboard data={temporal}/>:<TemporalDashboard temporal={temporal} aoi={aoi} start={start} end={end}/>
+}
+
+
+function SpatialStatsDashboard({data}:any){
+ const rows=Array.isArray(data?.rows)?data.rows:[];
+ const keys=(data?.variables||['NDVI','NDRE','NDWI','NDMI','EVI','SAVI','BSI','LST','Rainfall','Elevation','Slope']).filter((k:string)=>rows.some((r:any)=>isFiniteValue(r[k])));
+ const desc=keys.map((k:string)=>({key:k,...describeRows(rows,k)}));
+ const focus=[
+  regression(rows,'NDRE','NDVI'),
+  regression(rows,'NDMI','NDVI'),
+  regression(rows,'BSI','NDVI'),
+  regression(rows,'LST','NDVI'),
+  regression(rows,'Rainfall','NDVI'),
+  regression(rows,'LST','NDRE'),
+  regression(rows,'LST','NDMI'),
+  regression(rows,'LST','BSI'),
+  regression(rows,'Slope','NDVI')
+ ];
+ const multi=multipleOLS(rows,'NDVI',['NDRE','NDMI','BSI','LST','Rainfall','Slope']);
+ return <div className={styles.analyticsStack}>
+  <div className={styles.metrics}>
+   <Metric label="Analysis ID" value={data.analysisId||'—'}/>
+   <Metric label="Samples" value={String(data.sampleCountReturned||rows.length)}/>
+   <Metric label="AOI area" value={isFiniteValue(data.areaHa)?Number(data.areaHa).toLocaleString(undefined,{maximumFractionDigits:0})+' ha':'—'}/>
+   <Metric label="Analysis scale" value={data.provenance?.sampleScale?data.provenance.sampleScale+' m':'—'}/>
+  </div>
+
+  <section className={styles.card}>
+   <div className={styles.sectionHead}><div><h2>Distribution graphics</h2><p>Spatial distributions from the reproducible AOI sample.</p></div><span className={styles.pill}>Seed 42</span></div>
+   <div className={styles.histGrid}>
+    {['NDVI','NDRE','NDMI','BSI','LST','Rainfall'].filter(k=>keys.includes(k)).map(k=><Histogram key={k} rows={rows} valueKey={k}/>)}
+   </div>
+  </section>
+
+  <div className={styles.grid2}>
+   <section className={styles.card}><h2>Correlation matrix</h2><CorrelationMatrix rows={rows} keys={keys}/></section>
+   <section className={styles.card}><h2>Key bivariate regression models</h2><RegressionTable rows={focus}/></section>
+  </div>
+
+  <section className={styles.card}><h2>Scatterplots + fitted regression</h2><div className={styles.scatterGrid}>
+   <Scatter rows={rows} xKey="NDRE" yKey="NDVI"/>
+   <Scatter rows={rows} xKey="NDMI" yKey="NDVI"/>
+   <Scatter rows={rows} xKey="BSI" yKey="NDVI"/>
+   <Scatter rows={rows} xKey="LST" yKey="NDVI"/>
+   <Scatter rows={rows} xKey="Rainfall" yKey="NDVI"/>
+   <Scatter rows={rows} xKey="LST" yKey="NDRE"/>
+   <Scatter rows={rows} xKey="LST" yKey="NDMI"/>
+   <Scatter rows={rows} xKey="LST" yKey="BSI"/>
+  </div></section>
+
+  <div className={styles.grid2}>
+   <section className={styles.card}><h2>Multiple regression model</h2><MultipleModel model={multi}/></section>
+   <section className={styles.card}><h2>Reproducibility & limitations</h2><div className={styles.kv}>
+    <div><span>Analysis ID</span><b>{data.analysisId||'—'}</b></div>
+    <div><span>Method version</span><b>{data.provenance?.version||'—'}</b></div>
+    <div><span>Datasets</span><b>{Array.isArray(data.provenance?.datasets)?data.provenance.datasets.join(' • '):'—'}</b></div>
+    <div><span>Period</span><b>{data.provenance?.start} → {data.provenance?.end}</b></div>
+    <div><span>Sample scale</span><b>{data.provenance?.sampleScale||'—'} m</b></div>
+    <div><span>Random seed</span><b>{data.provenance?.seed??'—'}</b></div>
+   </div><div className={styles.notice}>{data.limitations}</div></section>
+  </div>
+
+  <section className={styles.card}><h2>Descriptive statistics</h2><div className={styles.tableWrap}><table className={styles.dataTable}><thead><tr><th>Variable</th><th>n</th><th>Mean</th><th>SD</th><th>Min</th><th>Q1</th><th>Median</th><th>Q3</th><th>Max</th></tr></thead><tbody>{desc.map((d:any)=><tr key={d.key}><td>{d.key}</td><td>{d.n}</td><td>{nfmt(d.mean)}</td><td>{nfmt(d.sd)}</td><td>{nfmt(d.min)}</td><td>{nfmt(d.q1)}</td><td>{nfmt(d.median)}</td><td>{nfmt(d.q3)}</td><td>{nfmt(d.max)}</td></tr>)}</tbody></table></div></section>
+
+  <section className={styles.card}><h2>Sample data table</h2><p>Showing the first {Math.min(rows.length,100)} of {rows.length} reproducible spatial samples.</p><div className={styles.tableWrap}><table className={styles.dataTable}><thead><tr><th>#</th>{keys.map((k:string)=><th key={k}>{k}</th>)}</tr></thead><tbody>{rows.slice(0,100).map((r:any,i:number)=><tr key={i}><td>{i+1}</td>{keys.map((k:string)=><td key={k}>{nfmt(r[k])}</td>)}</tr>)}</tbody></table></div></section>
+ </div>
+}
+
+function Histogram({rows,valueKey}:{rows:any[];valueKey:string}){
+ const vals=rows.map(r=>r[valueKey]).filter(isFiniteValue).map(Number);
+ if(vals.length<3)return <div className={styles.histCard}><b>{valueKey}</b><div className={styles.empty}>Insufficient data</div></div>;
+ let min=Math.min(...vals),max=Math.max(...vals);if(min===max){min-=.5;max+=.5}
+ const nBins=12,bins=Array(nBins).fill(0);
+ for(const v of vals){const idx=Math.min(nBins-1,Math.max(0,Math.floor((v-min)/(max-min)*nBins)));bins[idx]++}
+ const peak=Math.max(...bins,1);
+ return <div className={styles.histCard}><div className={styles.scatterTitle}><b>{valueKey}</b><span>n={vals.length}</span></div><div className={styles.histBars}>{bins.map((b,i)=><div key={i} title={String(b)} style={{height:(b/peak*100)+'%'}}></div>)}</div><div className={styles.histAxis}><span>{nfmt(min,2)}</span><span>{nfmt(max,2)}</span></div></div>
+}
+
+function invertMatrix(M:number[][]){
+ const n=M.length,A=M.map((r,i)=>[...r,...Array.from({length:n},(_,j)=>i===j?1:0)]);
+ for(let i=0;i<n;i++){
+  let p=i;for(let k=i+1;k<n;k++)if(Math.abs(A[k][i])>Math.abs(A[p][i]))p=k;
+  if(Math.abs(A[p][i])<1e-10)throw new Error('singular');
+  [A[i],A[p]]=[A[p],A[i]];
+  const d=A[i][i];for(let j=0;j<2*n;j++)A[i][j]/=d;
+  for(let k=0;k<n;k++)if(k!==i){const f=A[k][i];for(let j=0;j<2*n;j++)A[k][j]-=f*A[i][j]}
+ }
+ return A.map(r=>r.slice(n));
+}
+function multipleOLS(rows:any[],yKey:string,xKeys:string[]){
+ const clean=rows.filter(r=>isFiniteValue(r[yKey])&&xKeys.every(k=>isFiniteValue(r[k])));
+ const p=xKeys.length+1;
+ if(clean.length<p+5)return{ok:false,n:clean.length,note:'Insufficient complete samples.'};
+ try{
+  const X=clean.map(r=>[1,...xKeys.map(k=>Number(r[k]))]),y=clean.map(r=>Number(r[yKey]));
+  const Xt=X[0].map((_,j)=>X.map(r=>r[j]));
+  const XtX=Xt.map(row=>X[0].map((_,j)=>row.reduce((a,v,i)=>a+v*X[i][j],0)));
+  const Xty=Xt.map(row=>row.reduce((a,v,i)=>a+v*y[i],0));
+  const inv=invertMatrix(XtX),beta=inv.map(row=>row.reduce((a,v,i)=>a+v*Xty[i],0));
+  const pred=X.map(r=>r.reduce((a,v,i)=>a+v*beta[i],0)),ym=avg(y);
+  const sse=y.reduce((a,v,i)=>a+(v-pred[i])**2,0),sst=y.reduce((a,v)=>a+(v-ym)**2,0);
+  return{ok:true,n:y.length,r2:sst?1-sse/sst:null,rmse:Math.sqrt(sse/y.length),mae:avg(y.map((v,i)=>Math.abs(v-pred[i]))),coefficients:[{term:'Intercept',value:beta[0]},...xKeys.map((k,i)=>({term:k,value:beta[i+1]}))]};
+ }catch{return{ok:false,n:clean.length,note:'Model matrix is singular; predictors are strongly collinear.'}}
+}
+function MultipleModel({model}:any){
+ if(!model?.ok)return <div className={styles.notice}>{model?.note||'Model unavailable'} (n={model?.n||0}).</div>;
+ return <div><div className={styles.metricStrip}><span>n <b>{model.n}</b></span><span>R² <b>{nfmt(model.r2)}</b></span><span>RMSE <b>{nfmt(model.rmse,4)}</b></span><span>MAE <b>{nfmt(model.mae,4)}</b></span></div><div className={styles.tableWrap}><table className={styles.dataTable}><thead><tr><th>Term</th><th>Coefficient</th></tr></thead><tbody>{model.coefficients.map((x:any)=><tr key={x.term}><td>{x.term}</td><td>{nfmt(x.value,6)}</td></tr>)}</tbody></table></div><div className={styles.notice}>Exploratory spatial OLS: NDVI ~ NDRE + NDMI + BSI + LST + Rainfall + Slope. Coefficients are associative, not causal.</div></div>
 }
 
 function TemporalDashboard({temporal,aoi,start,end}:any){
@@ -252,7 +359,7 @@ function TemporalDashboard({temporal,aoi,start,end}:any){
  const id='GEOECO-'+hashString(JSON.stringify({aoi:aoi?.geometry,start,end})).toUpperCase();
  return <div className={styles.analyticsStack}>
   <section className={styles.card}>
-   <div className={styles.sectionHead}><div><h2>Temporal trajectories</h2><p>Quarterly AOI means from the same declared period. Analysis fingerprint: <b>{id}</b></p></div><span className={styles.pill}>{rows.length} quarterly records</span></div>
+   <div className={styles.sectionHead}><div><h2>Distribution graphics</h2><p>Quarterly AOI means from the same declared period. Analysis fingerprint: <b>{id}</b></p></div><span className={styles.pill}>{rows.length} quarterly records</span></div>
    <div className={styles.grid2}>
     <div><h3>Vegetation & moisture indices</h3><SimpleLineChart rows={rows} keys={['NDVI','NDRE','EVI','SAVI','NDMI','BSI']}/></div>
     <div><h3>Thermal & rainfall drivers</h3><SimpleLineChart rows={rows} keys={['LST']}/><SimpleLineChart rows={rows} keys={['Rainfall']}/></div>
