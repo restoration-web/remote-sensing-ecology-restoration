@@ -60,6 +60,7 @@ jobs:
           set -euo pipefail
           cat >/tmp/fire.json <<'JSON'
           {
+            "action":"fire",
             "end":"2026-09-15",
             "days":7,
             "responseWindowMinutes":60,
@@ -89,6 +90,7 @@ jobs:
           set -euo pipefail
           cat >/tmp/fire-zero.json <<'JSON'
           {
+            "action":"fire",
             "end":"2026-09-19",
             "days":7,
             "responseWindowMinutes":60,
@@ -110,7 +112,7 @@ jobs:
           HTTP=$(curl --show-error --silent --max-time 180 -w '%{http_code}' \
             -H 'content-type: application/json' \
             --data-binary @/tmp/fire-zero.json \
-            https://geospatial-restoration-q1.vercel.app/api/geoeco/fire \
+            https://geospatial-restoration-q1.vercel.app/api/geoeco_engine \
             -o /tmp/fire-zero-result.json || true)
           echo "HTTP=$HTTP"
           cat /tmp/fire-zero-result.json || true
