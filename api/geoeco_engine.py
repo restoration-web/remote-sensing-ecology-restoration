@@ -107,14 +107,67 @@ def classify(img, thresholds):
         cls = cls.where(img.gt(t), i+2)
     return cls.rename("class").updateMask(img.mask())
 
+def _norm(img, band, geom, scale):
+    mm=(img.select(band).reduceRegion(
+        reducer=ee.Reducer.minMax(),geometry=geom,scale=scale,
+        maxPixels=20000000,bestEffort=True,tileScale=8).getInfo() or {})
+    mn=mm.get(band+"_min"); mx=mm.get(band+"_max")
+    if not finite(mn) or not finite(mx) or float(mx)==float(mn):
+        return ee.Image.constant(0.5).rename(band+"_norm").clip(geom)
+    return img.select(band).subtract(float(mn)).divide(float(mx)-float(mn)).clamp(0,1).rename(band+"_norm")
+
+def susceptibility_image(layer, start, end, geom):
+    s2,_=s2_composite(start,end,geom)
+    ndvi=indices(s2).select("NDVI").rename("NDVI")
+    dem=ee.Image("USGS/SRTMGL1_003").select("elevation").clip(geom).rename("Elevation")
+    slope=ee.Terrain.slope(dem).rename("Slope")
+    rain=(ee.ImageCollection("UCSB-CHG/CHIRPS/DAILY")
+          .filterDate(start,end).filterBounds(geom).sum().rename("Rainfall").clip(geom))
+    n_ndvi=ndvi.add(1).divide(2).clamp(0,1)
+    low_ndvi=ee.Image(1).subtract(n_ndvi)
+    n_slope=_norm(slope,"Slope",geom,90)
+    n_dem=_norm(dem,"Elevation",geom,90)
+    n_rain=_norm(rain,"Rainfall",geom,5000)
+
+    if layer=="EROSION":
+        # Screening-level erosion susceptibility, not RUSLE soil-loss rate.
+        out=n_slope.multiply(0.45).add(n_rain.multiply(0.30)).add(low_ndvi.multiply(0.25))
+        return out.rename("value"), {
+            "type":"relative screening susceptibility",
+            "classes":"0-0.2/0.2-0.4/0.4-0.6/0.6-0.8/>0.8",
+            "validation":"Not locally calibrated; does not estimate t ha-1 yr-1",
+            "weights":{"slope":0.45,"rainfall":0.30,"lowNDVI":0.25}
+        }
+    if layer=="FLOOD":
+        low_dem=ee.Image(1).subtract(n_dem)
+        low_slope=ee.Image(1).subtract(n_slope)
+        out=low_dem.multiply(0.35).add(low_slope.multiply(0.25)).add(n_rain.multiply(0.25)).add(low_ndvi.multiply(0.15))
+        return out.rename("value"), {
+            "type":"relative screening susceptibility",
+            "classes":"0-0.2/0.2-0.4/0.4-0.6/0.6-0.8/>0.8",
+            "validation":"Not locally calibrated; not flood probability or inundation depth",
+            "weights":{"lowElevation":0.35,"lowSlope":0.25,"rainfall":0.25,"lowNDVI":0.15}
+        }
+    if layer=="LANDSLIDE":
+        out=n_slope.multiply(0.45).add(n_rain.multiply(0.30)).add(n_dem.multiply(0.10)).add(low_ndvi.multiply(0.15))
+        return out.rename("value"), {
+            "type":"relative screening susceptibility",
+            "classes":"0-0.2/0.2-0.4/0.4-0.6/0.6-0.8/>0.8",
+            "validation":"Not locally calibrated; geology, lithology, roads, and soil strength are not yet included",
+            "weights":{"slope":0.45,"rainfall":0.30,"elevation":0.10,"lowNDVI":0.15}
+        }
+    raise RuntimeError("Unsupported susceptibility layer: "+layer)
+
 def layer_image(layer, start, end, geom):
     if layer in ["NDVI","NDRE","NDWI","NDMI","BSI"]:
         s2,_ = s2_composite(start,end,geom)
         idx = indices(s2)
-        return idx.select(layer).rename("value")
+        return idx.select(layer).rename("value"), None
     if layer == "LST":
         lst,_ = lst_composite(start,end,geom)
-        return lst.rename("value")
+        return lst.rename("value"), None
+    if layer in ["EROSION","FLOOD","LANDSLIDE"]:
+        return susceptibility_image(layer,start,end,geom)
     raise RuntimeError("Unsupported layer for stable engine: "+layer)
 
 def map_analysis(p):
@@ -125,19 +178,28 @@ def map_analysis(p):
     start = str(p.get("start","2024-01-01"))
     end = str(p.get("end","2026-09-19"))
     layer = str(p.get("layer","NDVI")).upper()
-    img = layer_image(layer,start,end,g)
-    base = 60 if layer=="LST" else 20
+    img, model_meta = layer_image(layer,start,end,g)
+    is_model = layer in ["EROSION","FLOOD","LANDSLIDE"]
+    base = 90 if is_model else (60 if layer=="LST" else 20)
     scale = max(base, 300 if area_ha>1000000 else 180 if area_ha>250000 else 90 if area_ha>50000 else base)
-    reducer = ee.Reducer.mean().combine(ee.Reducer.stdDev(), sharedInputs=True).combine(
-        ee.Reducer.percentile([20,40,60,80]), sharedInputs=True)
-    st = img.reduceRegion(reducer=reducer, geometry=g, scale=scale, maxPixels=50000000,
-                          bestEffort=True, tileScale=8).getInfo()
-    th = [st.get("value_p20"),st.get("value_p40"),st.get("value_p60"),st.get("value_p80")]
-    if not all(finite(x) for x in th):
-        raise RuntimeError("Insufficient valid pixels for classification")
-    th=[float(x) for x in th]
+    if is_model:
+        reducer = ee.Reducer.mean().combine(ee.Reducer.stdDev(), sharedInputs=True)
+        st = img.reduceRegion(reducer=reducer, geometry=g, scale=scale, maxPixels=50000000,
+                              bestEffort=True, tileScale=8).getInfo()
+        th=[0.2,0.4,0.6,0.8]
+    else:
+        reducer = ee.Reducer.mean().combine(ee.Reducer.stdDev(), sharedInputs=True).combine(
+            ee.Reducer.percentile([20,40,60,80]), sharedInputs=True)
+        st = img.reduceRegion(reducer=reducer, geometry=g, scale=scale, maxPixels=50000000,
+                              bestEffort=True, tileScale=8).getInfo()
+        th = [st.get("value_p20"),st.get("value_p40"),st.get("value_p60"),st.get("value_p80")]
+        if not all(finite(x) for x in th):
+            raise RuntimeError("Insufficient valid pixels for classification")
+        th=[float(x) for x in th]
     cls = classify(img, th)
-    palette = ["#7f3b08","#b35806","#f1a340","#998ec3","#542788"] if layer!="LST" else ["#313695","#74add1","#ffffbf","#f46d43","#a50026"]
+    palette = (["#2c7bb6","#abd9e9","#ffffbf","#fdae61","#d7191c"] if is_model else
+               (["#313695","#74add1","#ffffbf","#f46d43","#a50026"] if layer=="LST" else
+                ["#7f3b08","#b35806","#f1a340","#998ec3","#542788"]))
     grouped = (ee.Image.pixelArea().divide(10000).rename("ha").addBands(cls)
                .reduceRegion(reducer=ee.Reducer.sum().group(groupField=1,groupName="class"),
                              geometry=g, scale=scale, maxPixels=50000000, bestEffort=True, tileScale=8)
@@ -165,8 +227,8 @@ def map_analysis(p):
         "legend":legend,"areaHa":area_ha,
         "stats":{"mean":st.get("value_mean"),"stdDev":st.get("value_stdDev"),"thresholds":th},
         "classArea":class_area,
-        "methodology":{"type":"relative AOI quintile visualization","classes":"P20/P40/P60/P80","validation":"Spectral index; no universal ecological threshold implied"},
-        "provenance":{"engine":"Python Earth Engine API","version":"GEOECO-PY-MAP-1.0.0","start":start,"end":end,"scale":scale,"areaHa":area_ha,"simplifyMeters":simplify_m}
+        "methodology":(model_meta if model_meta else {"type":"relative AOI quintile visualization","classes":"P20/P40/P60/P80","validation":"Spectral index; no universal ecological threshold implied"}),
+        "provenance":{"engine":"Python Earth Engine API","version":"GEOECO-PY-MAP-1.1.0","start":start,"end":end,"scale":scale,"areaHa":area_ha,"simplifyMeters":simplify_m}
     }
 
 def stats_analysis(p):
