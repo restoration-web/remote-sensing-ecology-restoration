@@ -66,7 +66,7 @@ export default function GeoEco(){
   <section className={styles.content}>
    <header className={styles.header}>
     <div><div className={styles.kicker}>SCIENTIFIC WEB-GIS</div><h1>{tab}</h1><p>Classified thematic maps, legends, class-area statistics, transparent model assumptions, and reproducible provenance.</p></div>
-    <div className={styles.actions}><button className={styles.secondary} onClick={()=>setPerspective(v=>!v)}>{perspective?'2D View':'Perspective View'}</button><button disabled={running} onClick={()=>run()}>{running?'Running…':'Run '+selected.name}</button></div>
+    <div className={styles.actions}>{tab==='Analysis'&&<button className={styles.secondary} onClick={()=>setPerspective(v=>!v)}>{perspective?'2D View':'Perspective View'}</button>}<button disabled={running} onClick={()=>run()}>{running?'Running…':tab==='Statistics & Models'?'Run Full Analysis':'Run '+selected.name}</button></div>
    </header>
 
    {tab==='Dashboard'&&<Dashboard result={result} selected={selected}/>}
