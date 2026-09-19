@@ -68,6 +68,9 @@ export default function GeoEco(){
  const [temporal,setTemporal]=useState<any>(null);
  const [fire,setFire]=useState<FireResult|null>(null);
  const [fireRunning,setFireRunning]=useState(false);
+ const [fireDays,setFireDays]=useState(7);
+ const [fireBufferKm,setFireBufferKm]=useState(25);
+ const [responseWindowMinutes,setResponseWindowMinutes]=useState(60);
  const [basemap,setBasemap]=useState('OSM');
  const [showAOI,setShowAOI]=useState(true);
  const [showRaster,setShowRaster]=useState(true);
@@ -80,7 +83,7 @@ export default function GeoEco(){
   setFireRunning(true);setFire({status:'running',note:'Loading NASA FIRMS / VIIRS hotspots…'});
   const data=await fetchJsonWithRetry('/api/geoeco_engine',{
    method:'POST',headers:{'Content-Type':'application/json'},
-   body:JSON.stringify({action:'fire',aoi:aoi.geometry,end,days:7,responseWindowMinutes:60})
+   body:JSON.stringify({action:'fire',aoi:aoi.geometry,end,days:fireDays,responseWindowMinutes,contextBufferKm:fireBufferKm})
   },3);
   setFire(data);setFireRunning(false);
  }
@@ -114,8 +117,8 @@ export default function GeoEco(){
  return <main className={styles.shell}>
   <aside className={styles.sidebar}>
    <div><div className={styles.brand}>GeoEco AI</div><div className={styles.tag}>Geospatial Environmental Intelligence</div></div>
-   <nav className={styles.nav}>{['Dashboard','Analysis','Statistics & Models','Fire Intelligence','Scientific Library','Help'].map(x=><button key={x} className={tab===x?styles.active:''} onClick={()=>setTab(x)}>{x}</button>)}</nav>
-   <div className={styles.sideFoot}>Engine v1.2<br/><span>Classified maps + provenance</span></div>
+   <nav className={styles.nav}>{['Dashboard','Analysis','Statistics & Models','Fire Intelligence','Publication Layout','Scientific Library','Help'].map(x=><button key={x} className={tab===x?styles.active:''} onClick={()=>setTab(x)}>{x}</button>)}</nav>
+   <div className={styles.sideFoot}>Engine v1.3<br/><span>Prepared by Wirawan Noor Hadi</span></div>
   </aside>
 
   <section className={styles.content}>
@@ -127,9 +130,11 @@ export default function GeoEco(){
    {tab==='Dashboard'&&<Dashboard result={result} selected={selected}/>}
    {tab==='Analysis'&&<AnalysisWorkspace aoi={aoi} setAoi={setAoi} start={start} setStart={setStart} end={end} setEnd={setEnd} layer={layer} setLayer={setLayer} result={result} temporal={temporal} run={run} running={running} perspective={perspective} basemap={basemap} setBasemap={setBasemap} showAOI={showAOI} setShowAOI={setShowAOI} showRaster={showRaster} setShowRaster={setShowRaster} showHotspots={showHotspots} setShowHotspots={setShowHotspots} rasterOpacity={rasterOpacity} setRasterOpacity={setRasterOpacity} fire={fire}/>}
    {tab==='Statistics & Models'&&<StatisticsPage temporal={temporal} aoi={aoi} start={start} end={end} run={run} running={running}/>}
-   {tab==='Fire Intelligence'&&<FirePage aoi={aoi} fire={fire} runFire={runFire} fireRunning={fireRunning} result={result} basemap={basemap} setBasemap={setBasemap} showAOI={showAOI} setShowAOI={setShowAOI} showRaster={showRaster} setShowRaster={setShowRaster} showHotspots={showHotspots} setShowHotspots={setShowHotspots} rasterOpacity={rasterOpacity} setRasterOpacity={setRasterOpacity}/>}
+   {tab==='Fire Intelligence'&&<FirePage aoi={aoi} fire={fire} runFire={runFire} fireRunning={fireRunning} result={result} basemap={basemap} setBasemap={setBasemap} showAOI={showAOI} setShowAOI={setShowAOI} showRaster={showRaster} setShowRaster={setShowRaster} showHotspots={showHotspots} setShowHotspots={setShowHotspots} rasterOpacity={rasterOpacity} setRasterOpacity={setRasterOpacity} fireDays={fireDays} setFireDays={setFireDays} fireBufferKm={fireBufferKm} setFireBufferKm={setFireBufferKm} responseWindowMinutes={responseWindowMinutes} setResponseWindowMinutes={setResponseWindowMinutes}/>}
+   {tab==='Publication Layout'&&<PublicationLayout aoi={aoi} result={result} basemap={basemap} start={start} end={end}/>}
    {tab==='Scientific Library'&&<ScientificLibrary layer={layer} setLayer={setLayer}/>}
    {tab==='Help'&&<Help/>}
+   <footer className={styles.appFooter}>GeoEco AI • Prepared by Wirawan Noor Hadi</footer>
   </section>
  </main>
 }
@@ -194,17 +199,24 @@ function MapDisplayControls({basemap,setBasemap,showAOI,setShowAOI,showRaster,se
  </section>
 }
 
-function FirePage({aoi,fire,runFire,fireRunning,result,basemap,setBasemap,showAOI,setShowAOI,showRaster,setShowRaster,showHotspots,setShowHotspots,rasterOpacity,setRasterOpacity}:any){
+function FirePage({aoi,fire,runFire,fireRunning,result,basemap,setBasemap,showAOI,setShowAOI,showRaster,setShowRaster,showHotspots,setShowHotspots,rasterOpacity,setRasterOpacity,fireDays,setFireDays,fireBufferKm,setFireBufferKm,responseWindowMinutes,setResponseWindowMinutes}:any){
  return <div className={styles.analysisLayout}>
   <MapDisplayControls basemap={basemap} setBasemap={setBasemap} showAOI={showAOI} setShowAOI={setShowAOI} showRaster={showRaster} setShowRaster={setShowRaster} showHotspots={showHotspots} setShowHotspots={setShowHotspots} rasterOpacity={rasterOpacity} setRasterOpacity={setRasterOpacity}/>
   <section className={styles.mapResultCard}>
-   <div className={styles.mapTitleRow}><div><h2>NASA FIRMS Fire Intelligence</h2><p>VIIRS 375 m near-real-time active fire detections clipped to the uploaded AOI.</p></div><button disabled={fireRunning} onClick={runFire}>{fireRunning?'Loading…':'Refresh Hotspots'}</button></div>
+   <div className={styles.mapTitleRow}><div><h2>NASA FIRMS Fire Intelligence</h2><p>VIIRS 375 m near-real-time active fire detections inside the AOI and across a configurable surrounding context buffer.</p></div><button disabled={fireRunning} onClick={runFire}>{fireRunning?'Loading…':'Refresh Hotspots'}</button></div>
+   <div className={styles.fireControls}>
+    <label>Hotspot period<select value={fireDays} onChange={e=>setFireDays(Number(e.target.value))}>{[1,3,7,14,30].map((d:number)=><option key={d} value={d}>{d} day{d>1?'s':''}</option>)}</select></label>
+    <label>Context buffer<select value={fireBufferKm} onChange={e=>setFireBufferKm(Number(e.target.value))}>{[5,10,25,50,100].map((d:number)=><option key={d} value={d}>{d} km</option>)}</select></label>
+    <label>Response window<select value={responseWindowMinutes} onChange={e=>setResponseWindowMinutes(Number(e.target.value))}>{[30,60,120,180,360].map((d:number)=><option key={d} value={d}>{d} min</option>)}</select></label>
+   </div>
    <GeoMap aoi={aoi} result={showRaster?result:null} perspective={false} basemap={basemap} showAOI={showAOI} showRaster={showRaster} rasterOpacity={rasterOpacity} hotspots={showHotspots?(fire?.points||[]):[]}/>
    {fire?.status==='error'&&<div className={styles.errorBox}>{fire.note}</div>}
   </section>
   {fire?.status==='success'&&<>
    <div className={styles.fireMetricGrid}>
-    <Metric label="Hotspot pixels" value={String(fire.summary?.count??0)}/>
+    <Metric label="All context hotspots" value={String(fire.summary?.count??0)}/>
+    <Metric label="Inside AOI" value={String(fire.summary?.insideAOICount??0)}/>
+    <Metric label="Outside AOI context" value={String(fire.summary?.contextCount??0)}/>
     <Metric label="Mean FRP" value={isFiniteValue(fire.summary?.frpMean)?nfmt(fire.summary.frpMean,1)+' MW':'NA'}/>
     <Metric label="Max FRP" value={isFiniteValue(fire.summary?.frpMax)?nfmt(fire.summary.frpMax,1)+' MW':'NA'}/>
     <Metric label="High confidence" value={String(fire.summary?.highConfidenceCount??0)}/>
@@ -222,9 +234,48 @@ function FirePage({aoi,fire,runFire,fireRunning,result,basemap,setBasemap,showAO
      <div className={styles.notice}>Golden time is a configurable operational response window. The spread value is a satellite-hotspot centroid displacement proxy, not physical flame-front rate of spread.</div>
     </section>
    </div>
-   <section className={styles.card}><h2>Hotspot table</h2><div className={styles.tableWrap}><table className={styles.dataTable}><thead><tr><th>Latitude</th><th>Longitude</th><th>FRP (MW)</th><th>Confidence</th><th>Brightness (K)</th><th>UTC epoch</th></tr></thead><tbody>{(fire.points||[]).slice(0,150).map((x:any,i:number)=><tr key={i}><td>{nfmt(x.lat,5)}</td><td>{nfmt(x.lon,5)}</td><td>{nfmt(x.frp,1)}</td><td>{x.confidence===2?'High':x.confidence===1?'Nominal':'Low'}</td><td>{nfmt(x.brightness,1)}</td><td>{x.epoch}</td></tr>)}</tbody></table></div><div className={styles.notice}>{fire.scientificNote}</div></section>
+   <section className={styles.card}><h2>Hotspot table</h2><div className={styles.tableWrap}><table className={styles.dataTable}><thead><tr><th>Scope</th><th>Latitude</th><th>Longitude</th><th>FRP (MW)</th><th>Confidence</th><th>Brightness (K)</th><th>UTC epoch</th></tr></thead><tbody>{(fire.points||[]).slice(0,150).map((x:any,i:number)=><tr key={i}><td>{x.insideAOI?'Inside AOI':'Context'}</td><td>{nfmt(x.lat,5)}</td><td>{nfmt(x.lon,5)}</td><td>{nfmt(x.frp,1)}</td><td>{x.confidence===2?'High':x.confidence===1?'Nominal':'Low'}</td><td>{nfmt(x.brightness,1)}</td><td>{x.epoch}</td></tr>)}</tbody></table></div><div className={styles.notice}>{fire.scientificNote}</div></section>
   </>}
  </div>
+}
+
+
+function PublicationLayout({aoi,result,basemap,start,end}:any){
+ const title=result?.layer?result.layer+' Scientific Map':'Scientific Map Layout';
+ const bounds=result?.bounds;
+ const coords=bounds?{
+  south:Number(bounds[0][0]).toFixed(4),west:Number(bounds[0][1]).toFixed(4),
+  north:Number(bounds[1][0]).toFixed(4),east:Number(bounds[1][1]).toFixed(4)
+ }:null;
+ if(!aoi?.geometry||!result?.imageUrl)return <section className={styles.card}><h2>Publication Layout</h2><p>Upload an AOI and generate an analysis map first. The publication layout will then include coordinates, inset map, legend, title, north arrow, scale bar, data sources, and author credit.</p></section>;
+ return <div className={styles.publicationPage}>
+  <section className={styles.publicationSheet}>
+   <header className={styles.publicationHeader}><div><h2>{title}</h2><p>{start} to {end}</p></div><div className={styles.publicationAuthor}>Prepared by Wirawan Noor Hadi</div></header>
+   <div className={styles.publicationGrid}>
+    <div className={styles.publicationMainMap}>
+     <GeoMap aoi={aoi} result={result} perspective={false} basemap={basemap} showAOI={true} showRaster={true} rasterOpacity={.9} hotspots={[]}/>
+     <div className={styles.northArrow}>N<br/>▲</div>
+     <div className={styles.coordTop}>{coords?coords.north+'° N':''}</div>
+     <div className={styles.coordBottom}>{coords?coords.south+'° N':''}</div>
+     <div className={styles.coordLeft}>{coords?coords.west+'° E':''}</div>
+     <div className={styles.coordRight}>{coords?coords.east+'° E':''}</div>
+     <div className={styles.scaleNote}>Scale bar shown in the interactive map control</div>
+    </div>
+    <aside className={styles.publicationSide}>
+     <div><h3>Inset Map</h3><InsetMap aoi={aoi}/></div>
+     <div><h3>Legend</h3><div className={styles.publicationLegend}>{(result.legend||[]).map((x:any)=><div key={x.class}><i style={{background:x.color}}></i><span>{x.label}</span></div>)}</div></div>
+     <div><h3>Map Information</h3><div className={styles.kv}><div><span>Layer</span><b>{result.layer}</b></div><div><span>Analysis scale</span><b>{result.provenance?.scale||'—'} m</b></div><div><span>AOI area</span><b>{isFiniteValue(result.provenance?.areaHa)?Number(result.provenance.areaHa).toLocaleString(undefined,{maximumFractionDigits:1})+' ha':'—'}</b></div><div><span>Data source</span><b>{result.provenance?.engine||'Google Earth Engine'}</b></div></div></div>
+    </aside>
+   </div>
+   <footer className={styles.publicationFooter}>GeoEco AI • Scientific Web-GIS • Prepared by Wirawan Noor Hadi</footer>
+  </section>
+ </div>
+}
+
+function InsetMap({aoi}:any){
+ const el=useRef<HTMLDivElement>(null);
+ useEffect(()=>{let dead=false;let map:any;(async()=>{if(!el.current)return;const L=await import('leaflet');if(dead||!el.current)return;map=L.map(el.current,{zoomControl:false,attributionControl:false,dragging:false,scrollWheelZoom:false,doubleClickZoom:false,boxZoom:false,keyboard:false});L.tileLayer(basemaps.Light.url,{maxZoom:18}).addTo(map);const layer=L.geoJSON(aoi.geometry,{style:{color:'#b51f1f',weight:2,fillColor:'#b51f1f',fillOpacity:.12}}).addTo(map);const b=layer.getBounds();if(b.isValid())map.fitBounds(b.pad(1.8));})();return()=>{dead=true;if(map)map.remove()}},[aoi]);
+ return <div ref={el} className={styles.insetMap}/>;
 }
 
 function GeoMap({aoi,result,perspective,basemap='OSM',showAOI=true,showRaster=true,rasterOpacity=.88,hotspots=[]}:{aoi:AOI;result:MapResult|null;perspective:boolean;basemap?:string;showAOI?:boolean;showRaster?:boolean;rasterOpacity?:number;hotspots?:any[]}){
@@ -499,6 +550,25 @@ function Scatter({rows,xKey,yKey}:{rows:any[];xKey:string;yKey:string}){
 }
 function hashString(x:string){let h=2166136261;for(let i=0;i<x.length;i++){h^=x.charCodeAt(i);h=Math.imul(h,16777619)}return (h>>>0).toString(16).padStart(8,'0')}
 function nfmt(v:any,d=3){return isFiniteValue(v)?Number(v).toFixed(d):'NA'}
+
+
+function downloadSvg(svgId:string,filename:string,format:'png'|'jpg'){
+ const svg=document.getElementById(svgId) as SVGElement|null;if(!svg)return;
+ const source=new XMLSerializer().serializeToString(svg);
+ const blob=new Blob([source],{type:'image/svg+xml;charset=utf-8'});const url=URL.createObjectURL(blob);
+ const img=new Image();img.onload=()=>{const canvas=document.createElement('canvas');canvas.width=1600;canvas.height=900;const ctx=canvas.getContext('2d');if(!ctx)return;ctx.fillStyle='#ffffff';ctx.fillRect(0,0,canvas.width,canvas.height);ctx.drawImage(img,0,0,canvas.width,canvas.height);URL.revokeObjectURL(url);const a=document.createElement('a');a.download=filename+'.'+format;a.href=canvas.toDataURL(format==='png'?'image/png':'image/jpeg',.95);a.click()};img.src=url;
+}
+function EcologicalNote({type}:any){
+ const notes:any={
+  distribution:'Distribution shape helps identify heterogeneity, skewness, and possible ecological thresholds within the AOI. Wide distributions may indicate strong spatial variation in vegetation, moisture, thermal conditions, or disturbance.',
+  correlation:'Correlation summarizes the direction and strength of spatial association among ecological indicators. Strong relationships can reveal coupled vegetation, moisture, thermal, terrain, or disturbance patterns, but do not establish causality.',
+  regression:'Regression quantifies how one ecological indicator changes with another within the sampled AOI. Interpret slope, R², RMSE, sample size, and ecological plausibility together.',
+  multiple:'The multiple regression model evaluates the combined association of several environmental predictors with NDVI. Coefficients can become unstable when predictors are strongly correlated, so this model is exploratory rather than causal.',
+  descriptive:'Descriptive statistics summarize the central tendency and spread of each environmental variable. Means describe average conditions, while quartiles and standard deviation reveal spatial variability and potential ecological heterogeneity.',
+  sample:'The sample table supports reproducibility and auditability. It represents a deterministic spatial sample and should not be interpreted as independent field observations because spatial autocorrelation may remain.'
+ };
+ return <div className={styles.ecoNote}><b>Ecological interpretation</b><span>{notes[type]||notes.descriptive}</span></div>;
+}
 
 function ScientificLibrary({layer,setLayer}:any){const x=layers.find((z:any)=>z.id===layer)||layers[0];return <div className={styles.gridMap}><section className={styles.card}><h2>Scientific methods</h2><div className={styles.libraryList}>{layers.map(m=><button key={m.id} className={m.id===layer?styles.libActive:''} onClick={()=>setLayer(m.id)}><b>{m.name}</b><span>{m.group}</span></button>)}</div></section><section className={styles.card}><div className={styles.pill}>{x.group}</div><h2>{x.name}</h2><p>{x.desc}</p><div className={styles.docGrid}>{['Scientific definition','Formula/model','Datasets','Preprocessing','Classification rule','Validation status','Uncertainty','Interpretation boundary','Limitations','References','Method version','Provenance fields'].map(t=><div key={t}><b>{t}</b><span>Version-controlled and exposed with each result.</span></div>)}</div><div className={styles.notice}>For spectral indices the default classes are AOI-relative quintiles, not universal ecological-health thresholds. Flood, landslide and erosion outputs are explicitly labelled screening-level relative susceptibility until locally calibrated and validated.</div></section></div>}
 function Help(){return <div className={styles.grid2}><section className={styles.card}><h2>How to use</h2><ol className={styles.steps}><li>Upload AOI.</li><li>Select dates.</li><li>Choose NDVI, NDRE, NDWI, NDMI, BSI, LST, erosion, flood or landslide.</li><li>Generate the map.</li><li>Read classes and legend.</li><li>Review area by class and statistics.</li><li>Check method, validation status and provenance before interpretation.</li></ol></section><section className={styles.card}><h2>About perspective view</h2><p>The optional perspective view is a cartographic 2.5D presentation. It does not alter raster values and is not presented as a true terrain-elevation model. A true DEM-driven 3D terrain renderer can be added as a separate visualization layer.</p></section></div>}
