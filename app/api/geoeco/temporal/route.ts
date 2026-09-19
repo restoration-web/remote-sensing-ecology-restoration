@@ -72,10 +72,14 @@ export async function POST(req:NextRequest){
     if(!ps.length)return NextResponse.json({status:'error',note:'Invalid date range'},{status:400});
     await initEE();
     const geom=aoiFC(p.aoi).geometry();
+    const areaHa=Number(await evaluate(geom.area(1).divide(10000)));
+    const simplifyMeters=areaHa>1000000?250:(areaHa>250000?150:(areaHa>50000?75:30));
+    const statGeom=geom.simplify(simplifyMeters);
+    const spectralScale=areaHa>1000000?300:(areaHa>250000?180:(areaHa>50000?90:60));
 
     const feats=ps.map(t=>{
       const s2c=ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED')
-        .filterDate(t.start,t.end).filterBounds(geom)
+        .filterDate(t.start,t.end).filterBounds(statGeom)
         .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE',30)).map(maskS2);
       const s2=ee.Image(ee.Algorithms.If(
         s2c.size().gt(0),
@@ -85,20 +89,20 @@ export async function POST(req:NextRequest){
 
       const lc=ee.ImageCollection('LANDSAT/LC08/C02/T1_L2')
         .merge(ee.ImageCollection('LANDSAT/LC09/C02/T1_L2'))
-        .filterDate(t.start,t.end).filterBounds(geom)
+        .filterDate(t.start,t.end).filterBounds(statGeom)
         .filter(ee.Filter.eq('PROCESSING_LEVEL','L2SP')).map(prepLST);
       const lst=ee.Image(ee.Algorithms.If(
         lc.size().gt(0),lc.median(),
         ee.Image.constant(0).rename('LST').updateMask(ee.Image.constant(0))
       ));
 
-      const rain=ee.ImageCollection('UCSB-CHG/CHIRPS/DAILY').filterDate(t.start,t.end).filterBounds(geom).sum().rename('Rainfall');
+      const rain=ee.ImageCollection('UCSB-CHG/CHIRPS/DAILY').filterDate(t.start,t.end).filterBounds(statGeom).sum().rename('Rainfall');
 
       const spectral=ee.Dictionary(ee.Image.cat([s2,lst]).reduceRegion({
-        reducer:ee.Reducer.mean(),geometry:geom,scale:60,maxPixels:1e8,bestEffort:true,tileScale:8
+        reducer:ee.Reducer.mean(),geometry:statGeom,scale:spectralScale,maxPixels:1e8,bestEffort:true,tileScale:8
       }));
       const rainVal=rain.reduceRegion({
-        reducer:ee.Reducer.mean(),geometry:geom,scale:5000,maxPixels:1e7,bestEffort:true,tileScale:4
+        reducer:ee.Reducer.mean(),geometry:statGeom,scale:5000,maxPixels:1e7,bestEffort:true,tileScale:4
       }).get('Rainfall');
 
       return ee.Feature(null,spectral
@@ -124,8 +128,8 @@ export async function POST(req:NextRequest){
       Rainfall:finite(r.Rainfall)?Number(r.Rainfall):null
     }));
     return NextResponse.json({
-      status:'success',temporalResolution:'quarterly',rows,
-      provenance:{version:'GEOECO-TEMPORAL-1.0.0',datasets:['Sentinel-2 SR Harmonized','Landsat 8/9 C2 L2','CHIRPS'],start,end},
+      status:'success',temporalResolution:'quarterly',rows,areaHa,
+      provenance:{version:'GEOECO-TEMPORAL-1.0.1',datasets:['Sentinel-2 SR Harmonized','Landsat 8/9 C2 L2','CHIRPS'],start,end,areaHa,spectralScale,simplifyMeters,scalePolicy:'adaptive-by-AOI-area'},
       note:'Quarterly AOI means. Correlation and regression indicate association, not causality.'
     });
   }catch(e:any){
