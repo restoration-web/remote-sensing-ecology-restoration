@@ -41,7 +41,7 @@ export default function GeoEco(){
    setLayer(target);setRunning(true);setResult({status:'running',note:'Processing '+target+' in Google Earth Engine…'});
    try{
      const mapReq=fetch('/api/geoeco/analysis',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({aoi:aoi.geometry,start,end,layer:target})});
-     const timeReq=fetch('/api/analyze',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({period:{start:start.slice(0,4),end:end.slice(0,4)},sensor:'Landsat 5/7/8/9',variables:['NDVI','EVI','SAVI','NDMI','NDWI','BSI','LST','Rainfall'],aoi:aoi.geometry,aoiName:aoi.name})});
+     const timeReq=fetch('/api/geoeco/temporal',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({start,end,aoi:aoi.geometry,aoiName:aoi.name})});
      const [mapRes,timeRes]=await Promise.all([mapReq,timeReq]);
      const [data,timeData]=await Promise.all([mapRes.json(),timeRes.json()]);
      setResult(data);setTemporal(timeData);
@@ -188,9 +188,10 @@ function StatisticsPage({temporal,aoi,start,end,run,running}:any){
 
 function TemporalDashboard({temporal,aoi,start,end}:any){
  const rows=mergeTemporal(temporal);
- const keys=['NDVI','EVI','SAVI','NDMI','NDWI','BSI','LST','Rainfall'];
+ const keys=['NDVI','NDRE','EVI','SAVI','NDMI','NDWI','BSI','LST','Rainfall'];
  const desc=keys.map(k=>({key:k,...describeRows(rows,k)}));
  const focus=[
+  regression(rows,'NDVI','NDRE'),
   regression(rows,'NDVI','NDMI'),
   regression(rows,'NDVI','BSI'),
   regression(rows,'NDVI','LST'),
@@ -204,10 +205,10 @@ function TemporalDashboard({temporal,aoi,start,end}:any){
   <section className={styles.card}>
    <div className={styles.sectionHead}><div><h2>Temporal trajectories</h2><p>Annual AOI means from the same declared period. Analysis fingerprint: <b>{id}</b></p></div><span className={styles.pill}>{rows.length} annual records</span></div>
    <div className={styles.grid2}>
-    <div><h3>Vegetation & moisture indices</h3><SimpleLineChart rows={rows} keys={['NDVI','EVI','SAVI','NDMI','BSI']}/></div>
+    <div><h3>Vegetation & moisture indices</h3><SimpleLineChart rows={rows} keys={['NDVI','NDRE','EVI','SAVI','NDMI','BSI']}/></div>
     <div><h3>Thermal & rainfall drivers</h3><SimpleLineChart rows={rows} keys={['LST']}/><SimpleLineChart rows={rows} keys={['Rainfall']}/></div>
    </div>
-   <div className={styles.notice}>NDRE is mapped from Sentinel-2, but its temporal correlation is intentionally not inferred from Landsat. NDRE correlation will be enabled only when the Sentinel-2 time-series engine is added.</div>
+   <div className={styles.notice}>Temporal statistics use Sentinel-2 for NDVI, NDRE, NDWI, NDMI, EVI, SAVI and BSI; Landsat 8/9 for LST; and CHIRPS for rainfall. Correlation and regression describe association, not causality.</div>
   </section>
 
   <div className={styles.grid2}>
@@ -216,6 +217,7 @@ function TemporalDashboard({temporal,aoi,start,end}:any){
   </div>
 
   <section className={styles.card}><h2>Scatterplots</h2><div className={styles.scatterGrid}>
+   <Scatter rows={rows} xKey="NDRE" yKey="NDVI"/>
    <Scatter rows={rows} xKey="NDMI" yKey="NDVI"/>
    <Scatter rows={rows} xKey="BSI" yKey="NDVI"/>
    <Scatter rows={rows} xKey="LST" yKey="NDVI"/>
@@ -226,13 +228,12 @@ function TemporalDashboard({temporal,aoi,start,end}:any){
 
   <section className={styles.card}><h2>Descriptive statistics</h2><div className={styles.tableWrap}><table className={styles.dataTable}><thead><tr><th>Variable</th><th>n</th><th>Mean</th><th>SD</th><th>Min</th><th>Q1</th><th>Median</th><th>Q3</th><th>Max</th></tr></thead><tbody>{desc.map((d:any)=><tr key={d.key}><td>{d.key}</td><td>{d.n}</td><td>{nfmt(d.mean)}</td><td>{nfmt(d.sd)}</td><td>{nfmt(d.min)}</td><td>{nfmt(d.q1)}</td><td>{nfmt(d.median)}</td><td>{nfmt(d.q3)}</td><td>{nfmt(d.max)}</td></tr>)}</tbody></table></div></section>
 
-  <section className={styles.card}><h2>Annual analysis table</h2><div className={styles.tableWrap}><table className={styles.dataTable}><thead><tr><th>Year</th>{keys.map(k=><th key={k}>{k}</th>)}</tr></thead><tbody>{rows.map((r:any)=><tr key={r.year}><td>{r.year}</td>{keys.map(k=><td key={k}>{nfmt(r[k])}</td>)}</tr>)}</tbody></table></div></section>
+  <section className={styles.card}><h2>Quarterly analysis table</h2><div className={styles.tableWrap}><table className={styles.dataTable}><thead><tr><th>Period</th>{keys.map(k=><th key={k}>{k}</th>)}</tr></thead><tbody>{rows.map((r:any,i:number)=><tr key={i}><td>{r.period||r.start||i+1}</td>{keys.map(k=><td key={k}>{nfmt(r[k])}</td>)}</tr>)}</tbody></table></div></section>
  </div>
 }
 
 function mergeTemporal(t:any){
- const rain=new Map((t?.annualRainfall||[]).map((r:any)=>[Number(r.year),r.Rainfall]));
- return (t?.annualStats||[]).map((r:any)=>({...r,Rainfall:rain.get(Number(r.year))??null})).sort((a:any,b:any)=>Number(a.year)-Number(b.year));
+ return Array.isArray(t?.rows)?t.rows:[];
 }
 function isFiniteValue(v:any){return v!==null&&v!==undefined&&v!==''&&Number.isFinite(Number(v))}
 function avg(a:number[]){return a.reduce((x,y)=>x+y,0)/a.length}
