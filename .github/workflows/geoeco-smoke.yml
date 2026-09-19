@@ -1,4 +1,4 @@
-name: GeoEco large-AOI production smoke test
+name: GeoEco production verification
 
 on:
   pull_request:
@@ -9,12 +9,25 @@ jobs:
   smoke:
     runs-on: ubuntu-latest
     steps:
-      - name: Health
+      - name: Repeated Earth Engine health checks
         run: |
-          curl --fail --show-error --silent --max-time 90 https://geospatial-restoration-q1.vercel.app/api/geoeco/health
+          set -euo pipefail
+          for i in 1 2 3 4 5; do
+            echo "Health attempt $i"
+            curl --fail --show-error --silent --max-time 90               https://geospatial-restoration-q1.vercel.app/api/geoeco/health               -o /tmp/health.json
+            cat /tmp/health.json
+            python - <<'PY'
+import json
+x=json.load(open('/tmp/health.json'))
+assert x.get('status')=='success',x
+assert x.get('thumbGenerated') is True,x
+PY
+            sleep 2
+          done
 
-      - name: Generate NDVI for large AOI
+      - name: Generate NDVI for representative large AOI
         run: |
+          set -euo pipefail
           cat >/tmp/payload.json <<'JSON'
           {
             "start":"2024-01-01",
@@ -35,20 +48,38 @@ jobs:
             }
           }
           JSON
-          curl --fail --show-error --silent --max-time 240             -H 'content-type: application/json' --data-binary @/tmp/payload.json             https://geospatial-restoration-q1.vercel.app/api/geoeco/analysis -o /tmp/map.json
+          curl --fail --show-error --silent --max-time 300             -H 'content-type: application/json'             --data-binary @/tmp/payload.json             https://geospatial-restoration-q1.vercel.app/api/geoeco/analysis             -o /tmp/map.json
           cat /tmp/map.json
           python - <<'PY'
-          import json
-          x=json.load(open('/tmp/map.json'))
-          assert x['status']=='success',x
-          assert x['imageUrl'],x
-          assert len(x['legend'])==5,x
-          assert len(x['classArea'])>0,x
-          assert x['provenance']['scale']>=90,x
-          PY
+import json
+x=json.load(open('/tmp/map.json'))
+assert x.get('status')=='success',x
+assert x.get('layer')=='NDVI',x
+assert x.get('imageUrl'),x
+assert len(x.get('legend') or [])==5,x
+assert len(x.get('classArea') or [])>0,x
+assert x.get('provenance',{}).get('scale',0)>=90,x
+print(x['imageUrl'])
+PY
+          IMG=$(python - <<'PY'
+import json
+print(json.load(open('/tmp/map.json'))['imageUrl'])
+PY
+)
+          curl --fail --show-error --silent --max-time 120 "$IMG" -o /tmp/result.png
+          python - <<'PY'
+from pathlib import Path
+p=Path('/tmp/result.png')
+assert p.stat().st_size > 1000,p.stat().st_size
+assert p.read_bytes()[:8] == b'PNG
+
+'
+print("PNG bytes:",p.stat().st_size)
+PY
 
-      - name: Statistics for large AOI
+      - name: Statistics for representative large AOI
         run: |
+          set -euo pipefail
           cat >/tmp/time.json <<'JSON'
           {
             "start":"2024-01-01",
@@ -68,12 +99,17 @@ jobs:
             }
           }
           JSON
-          curl --fail --show-error --silent --max-time 300             -H 'content-type: application/json' --data-binary @/tmp/time.json             https://geospatial-restoration-q1.vercel.app/api/geoeco/temporal -o /tmp/time-result.json
+          curl --fail --show-error --silent --max-time 300             -H 'content-type: application/json'             --data-binary @/tmp/time.json             https://geospatial-restoration-q1.vercel.app/api/geoeco/temporal             -o /tmp/time-result.json
           cat /tmp/time-result.json
           python - <<'PY'
-          import json
-          x=json.load(open('/tmp/time-result.json'))
-          assert x['status']=='success',x
-          assert len(x['rows'])>0,x
-          assert x['provenance']['spectralScale']>=90,x
-          PY
+import json, math
+x=json.load(open('/tmp/time-result.json'))
+assert x.get('status')=='success',x
+rows=x.get('rows') or []
+assert len(rows)>=4,x
+needed=['NDVI','NDRE','NDMI','BSI','LST','Rainfall']
+for k in needed:
+    assert any(r.get(k) is not None for r in rows), (k,rows)
+assert x.get('provenance',{}).get('spectralScale',0)>=90,x
+print("Rows:",len(rows))
+PY
