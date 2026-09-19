@@ -1,9 +1,8 @@
 import {NextRequest,NextResponse} from 'next/server';
-import {createHash} from 'crypto';
 
 export const runtime='nodejs';
 export const maxDuration=300;
-try{process.chdir('/tmp')}catch{}\nconst ee=require('@google/earthengine');
+const ee=require('@google/earthengine');
 
 function initEE(){
   return new Promise<void>((resolve,reject)=>{
@@ -116,13 +115,13 @@ const palettes={
 };
 export async function POST(req:NextRequest){
  try{
+  try{process.chdir('/tmp')}catch{}
   const p=await req.json();
   if(!p?.aoi?.features?.length)return NextResponse.json({status:'error',note:'AOI required'},{status:400});
   await initEE();
   const geom=aoiFC(p.aoi).geometry();
   const start=String(p.start||'2024-01-01'),end=String(p.end||'2026-12-31');
   const layer=String(p.layer||'NDVI').toUpperCase();
-  const analysisId='GEOECO-'+createHash('sha256').update(JSON.stringify({aoi:p.aoi,start,end,layer,version:'1.2.1'})).digest('hex').slice(0,12).toUpperCase();
   const isModel=['FLOOD','LANDSLIDE','EROSION'].includes(layer);
   const img=isModel?modelImage(layer,start,end,geom):indicatorImage(layer,start,end,geom);
   const scale=layer==='LST'?60:(isModel?90:20);
@@ -135,7 +134,7 @@ export async function POST(req:NextRequest){
   const labels=isModel?['Very Low','Low','Moderate','High','Very High']:['Very Low','Low','Moderate','High','Very High'];
   const legend=labels.map((label,i)=>({class:i+1,label,color:palette[i],min:i===0?null:thresholds[i-1],max:i===4?null:thresholds[i]}));
   return NextResponse.json({
-   status:'success',analysisId,layer,imageUrl,bounds:boundsFromGeoJSON(p.aoi),legend,
+   status:'success',layer,imageUrl,bounds:boundsFromGeoJSON(p.aoi),legend,
    stats:{mean:stats.value_mean,stdDev:stats.value_stdDev,thresholds},
    classArea:classArea.map((g:any)=>({class:g.class,areaHa:g.sum})),
    methodology:isModel?{
