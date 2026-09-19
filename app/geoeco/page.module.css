@@ -16,3 +16,6 @@
 .overlayStatus[data-state="loaded"]{background:#e9f5ef;color:#1c6a50;border-color:#bcdccc}
 .overlayStatus[data-state="loading"]{background:#fff8df;color:#84620f;border-color:#eadb9d}
 .overlayStatus[data-state="error"]{background:#fff0ef;color:#973f35;border-color:#efc7c2}
+
+.histGrid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.histCard{border:1px solid #e1e8e5;background:#fbfcfc;border-radius:12px;padding:12px;min-height:180px}.histBars{height:120px;display:flex;align-items:flex-end;gap:3px;border-bottom:1px solid #c9d5d0;padding:0 2px}.histBars div{flex:1;min-width:3px;background:#2f8069;border-radius:3px 3px 0 0;opacity:.88}.histAxis{display:flex;justify-content:space-between;font-size:9px;color:#74817c;margin-top:5px}.metricStrip{display:flex;gap:8px;flex-wrap:wrap;margin:8px 0 14px}.metricStrip span{background:#eef5f2;border:1px solid #dbe8e2;border-radius:999px;padding:7px 10px;font-size:10px;color:#66766f}.metricStrip b{color:#163f33}.analyticsStack{display:flex;flex-direction:column;gap:16px}
+@media(max-width:1000px){.histGrid{grid-template-columns:repeat(2,1fr)}}@media(max-width:650px){.histGrid{grid-template-columns:1fr}}
