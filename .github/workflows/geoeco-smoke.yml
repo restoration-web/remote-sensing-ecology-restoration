@@ -1,4 +1,4 @@
-name: GeoEco production smoke test
+name: GeoEco large-AOI production smoke test
 
 on:
   pull_request:
@@ -9,23 +9,16 @@ jobs:
   smoke:
     runs-on: ubuntu-latest
     steps:
-      - name: Diagnose health endpoint
+      - name: Health
         run: |
-          set -u
-          HTTP=$(curl --show-error --silent --max-time 90 -w '%{http_code}'             https://geospatial-restoration-q1.vercel.app/api/geoeco/health             -o /tmp/health.json || true)
-          echo "HTTP=$HTTP"
-          echo "BODY:"
-          cat /tmp/health.json || true
-          echo
-          test "$HTTP" = "200"
+          curl --fail --show-error --silent --max-time 90 https://geospatial-restoration-q1.vercel.app/api/geoeco/health
 
-      - name: Diagnose NDVI map generation
+      - name: Generate NDVI for large AOI
         run: |
-          set -u
           cat >/tmp/payload.json <<'JSON'
           {
-            "start":"2026-01-01",
-            "end":"2026-09-01",
+            "start":"2024-01-01",
+            "end":"2026-09-19",
             "layer":"NDVI",
             "aoi":{
               "type":"FeatureCollection",
@@ -35,28 +28,31 @@ jobs:
                 "geometry":{
                   "type":"Polygon",
                   "coordinates":[[
-                    [114.55,-3.45],[114.65,-3.45],[114.65,-3.35],[114.55,-3.35],[114.55,-3.45]
+                    [114.0,-4.0],[115.0,-4.0],[115.0,-3.0],[114.0,-3.0],[114.0,-4.0]
                   ]]
                 }
               }]
             }
           }
           JSON
-          HTTP=$(curl --show-error --silent --max-time 180 -w '%{http_code}'             -H 'content-type: application/json'             --data-binary @/tmp/payload.json             https://geospatial-restoration-q1.vercel.app/api/geoeco/analysis             -o /tmp/map.json || true)
-          echo "HTTP=$HTTP"
-          echo "BODY:"
-          cat /tmp/map.json || true
-          echo
-          test "$HTTP" = "200"
+          curl --fail --show-error --silent --max-time 240             -H 'content-type: application/json' --data-binary @/tmp/payload.json             https://geospatial-restoration-q1.vercel.app/api/geoeco/analysis -o /tmp/map.json
+          cat /tmp/map.json
+          python - <<'PY'
+          import json
+          x=json.load(open('/tmp/map.json'))
+          assert x['status']=='success',x
+          assert x['imageUrl'],x
+          assert len(x['legend'])==5,x
+          assert len(x['classArea'])>0,x
+          assert x['provenance']['scale']>=90,x
+          PY
 
-      - name: Diagnose GeoEco temporal statistics
+      - name: Statistics for large AOI
         run: |
-          set -u
           cat >/tmp/time.json <<'JSON'
           {
             "start":"2024-01-01",
             "end":"2026-09-19",
-            "aoiName":"Smoke AOI",
             "aoi":{
               "type":"FeatureCollection",
               "features":[{
@@ -65,16 +61,19 @@ jobs:
                 "geometry":{
                   "type":"Polygon",
                   "coordinates":[[
-                    [114.55,-3.45],[114.65,-3.45],[114.65,-3.35],[114.55,-3.35],[114.55,-3.45]
+                    [114.0,-4.0],[115.0,-4.0],[115.0,-3.0],[114.0,-3.0],[114.0,-4.0]
                   ]]
                 }
               }]
             }
           }
           JSON
-          HTTP=$(curl --show-error --silent --max-time 240 -w '%{http_code}'             -H 'content-type: application/json'             --data-binary @/tmp/time.json             https://geospatial-restoration-q1.vercel.app/api/geoeco/temporal             -o /tmp/time-result.json || true)
-          echo "HTTP=$HTTP"
-          echo "BODY:"
-          cat /tmp/time-result.json || true
-          echo
-          test "$HTTP" = "200"
+          curl --fail --show-error --silent --max-time 300             -H 'content-type: application/json' --data-binary @/tmp/time.json             https://geospatial-restoration-q1.vercel.app/api/geoeco/temporal -o /tmp/time-result.json
+          cat /tmp/time-result.json
+          python - <<'PY'
+          import json
+          x=json.load(open('/tmp/time-result.json'))
+          assert x['status']=='success',x
+          assert len(x['rows'])>0,x
+          assert x['provenance']['spectralScale']>=90,x
+          PY
