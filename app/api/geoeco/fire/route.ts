@@ -49,8 +49,41 @@ export async function POST(req:NextRequest){
   const snpp=ee.ImageCollection('NASA/LANCE/SNPP_VIIRS/C2').filterDate(s,e).filterBounds(geom);
   const noaa=ee.ImageCollection('NASA/LANCE/NOAA20_VIIRS/C2').filterDate(s,e).filterBounds(geom);
   const col=snpp.merge(noaa).sort('system:time_start');
+  const imageCount=Number(await evalEE(col.size()));
 
-  const hotspotMask=col.select('frp').max().gt(0).selfMask().clip(geom);
+  if(!imageCount){
+    return NextResponse.json({
+      status:'success',source:'NASA FIRMS / VIIRS 375 m NRT via Google Earth Engine',
+      period:{days,end},bounds:boundsFromGeoJSON(p.aoi),points:[],
+      summary:{count:0,frpMean:null,frpMax:null,highConfidenceCount:0,nominalOrHighCount:0,latestEpoch:null},
+      goldenTime:null,
+      spreadProxy:{available:false,note:'No VIIRS hotspot detections are available in the AOI and selected period.'},
+      vegetationContext:null,
+      scientificNote:'No active-fire detections were found for the AOI and selected period. Zero detections do not prove that no fire occurred; cloud, overpass timing, sensor limits, and fire size can affect detection.',
+      provenance:{datasets:['NASA/LANCE/SNPP_VIIRS/C2','NASA/LANCE/NOAA20_VIIRS/C2'],hotspotResolutionM:375,responseWindowMinutes,imageCount:0}
+    });
+  }
+
+  const frpMax=col.select('frp').max().rename('frp').clip(geom);
+  const validCountRaw=await evalEE(frpMax.gt(0).selfMask().reduceRegion({
+    reducer:ee.Reducer.count(),geometry:geom,scale:375,maxPixels:1e7,bestEffort:true,tileScale:4
+  }).get('frp'));
+  const validHotspotPixels=Number(validCountRaw||0);
+
+  if(!validHotspotPixels){
+    return NextResponse.json({
+      status:'success',source:'NASA FIRMS / VIIRS 375 m NRT via Google Earth Engine',
+      period:{days,end},bounds:boundsFromGeoJSON(p.aoi),points:[],
+      summary:{count:0,frpMean:null,frpMax:null,highConfidenceCount:0,nominalOrHighCount:0,latestEpoch:null},
+      goldenTime:null,
+      spreadProxy:{available:false,note:'No VIIRS hotspot pixels were detected in the AOI and selected period.'},
+      vegetationContext:null,
+      scientificNote:'No active-fire detections were found for the AOI and selected period. Zero detections do not prove that no fire occurred; cloud, overpass timing, sensor limits, and fire size can affect detection.',
+      provenance:{datasets:['NASA/LANCE/SNPP_VIIRS/C2','NASA/LANCE/NOAA20_VIIRS/C2'],hotspotResolutionM:375,responseWindowMinutes,imageCount,validHotspotPixels:0}
+    });
+  }
+
+  const hotspotMask=frpMax.gt(0).selfMask();
   const latest=col.qualityMosaic('acq_epoch').clip(geom);
   const fireBands=latest.select(['frp','confidence','Bright_ti4','acq_epoch']).updateMask(hotspotMask);
 
@@ -113,7 +146,7 @@ export async function POST(req:NextRequest){
     period:{days,end},bounds:boundsFromGeoJSON(p.aoi),points:points.slice(0,600),summary,goldenTime,spreadProxy,
     vegetationContext:context,
     scientificNote:'VIIRS NRT active-fire detections support monitoring but are not science-quality final products. Hotspot pixels do not directly represent burned area or flame perimeter.',
-    provenance:{datasets:['NASA/LANCE/SNPP_VIIRS/C2','NASA/LANCE/NOAA20_VIIRS/C2','COPERNICUS/S2_SR_HARMONIZED'],hotspotResolutionM:375,responseWindowMinutes}
+    provenance:{datasets:['NASA/LANCE/SNPP_VIIRS/C2','NASA/LANCE/NOAA20_VIIRS/C2','COPERNICUS/S2_SR_HARMONIZED'],hotspotResolutionM:375,responseWindowMinutes,imageCount,validHotspotPixels}
   });
  }catch(e:any){
   return NextResponse.json({status:'error',note:e?.message||String(e),stage:'fire-intelligence'},{status:500});
