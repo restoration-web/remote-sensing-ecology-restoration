@@ -1,4 +1,5 @@
 import {NextRequest,NextResponse} from 'next/server';
+import {createHash} from 'crypto';
 
 export const runtime='nodejs';
 export const maxDuration=300;
@@ -110,6 +111,7 @@ export async function POST(req:NextRequest){
  try{
   const p=await req.json();if(!p?.aoi?.features?.length)return NextResponse.json({status:'error',note:'AOI required'},{status:400});
   const start=String(p.start||'2024-01-01'),end=String(p.end||'2026-09-19'),periods=makePeriods(start,end);
+  const analysisId='GEOECO-A-'+createHash('sha256').update(JSON.stringify({aoi:p.aoi,start,end,version:'1.0.1'})).digest('hex').slice(0,12).toUpperCase();
   if(!periods.length)return NextResponse.json({status:'error',note:'Invalid date range'},{status:400});
   await initEE();const geom=aoiFC(p.aoi).geometry();
   const features=periods.map((t:any)=>{
@@ -137,7 +139,7 @@ export async function POST(req:NextRequest){
   ];
   const multiple=multipleRegression(rows,'NDVI',['NDRE','NDMI','BSI','LST','Rainfall']);
   return NextResponse.json({
-    status:'success',temporalResolution:'quarterly',rows,descriptive,correlations,focus,multipleRegression:multiple,
+    status:'success',analysisId,temporalResolution:'quarterly',rows,descriptive,correlations,focus,multipleRegression:multiple,
     provenance:{analysisVersion:'GEOECO-ANALYTICS-1.0.0',datasets:'Sentinel-2 SR Harmonized + Landsat 8/9 C2 L2 + CHIRPS',start,end,periods:rows.length},
     limitations:'Temporal AOI-mean correlations and regressions describe association, not causation. Small sample sizes and multicollinearity can make coefficients unstable.'
   });
