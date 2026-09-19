@@ -12,6 +12,14 @@ type MapResult={
  methodology?:any;provenance?:any;
 };
 
+async function safeJson(res:Response){
+ const text=await res.text();
+ try{return JSON.parse(text)}
+ catch{
+  return {status:'error',note:'Server returned non-JSON response (HTTP '+res.status+'). '+text.slice(0,180).replace(/<[^>]*>/g,' ')};
+ }
+}
+
 const layers=[
  {id:'NDVI',name:'NDVI',group:'Vegetation',desc:'Vegetation greenness',active:true},
  {id:'NDRE',name:'NDRE',group:'Vegetation',desc:'Red-edge vegetation response',active:true},
@@ -43,7 +51,7 @@ export default function GeoEco(){
      const mapReq=fetch('/api/geoeco/analysis',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({aoi:aoi.geometry,start,end,layer:target})});
      const timeReq=fetch('/api/geoeco/temporal',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({start,end,aoi:aoi.geometry,aoiName:aoi.name})});
      const [mapRes,timeRes]=await Promise.all([mapReq,timeReq]);
-     const [data,timeData]=await Promise.all([mapRes.json(),timeRes.json()]);
+     const [data,timeData]=await Promise.all([safeJson(mapRes),safeJson(timeRes)]);
      setResult(data);setTemporal(timeData);
    }catch(e:any){setResult({status:'error',note:e?.message||String(e)})}finally{setRunning(false)}
  }
