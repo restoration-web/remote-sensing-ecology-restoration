@@ -19,6 +19,20 @@ async function safeJson(res:Response){
   return {status:'error',note:'Server returned non-JSON response (HTTP '+res.status+'). '+text.slice(0,180).replace(/<[^>]*>/g,' ')};
  }
 }
+async function fetchJsonWithRetry(url:string,options:RequestInit,attempts=3){
+ let last:any={status:'error',note:'Request failed'};
+ for(let i=0;i<attempts;i++){
+  try{
+   const res=await fetch(url,options);
+   const data=await safeJson(res);
+   if(res.ok&&data?.status!=='error') return data;
+   last=data;
+   if(res.status<500) return data;
+  }catch(e:any){last={status:'error',note:e?.message||String(e)}}
+  await new Promise(r=>setTimeout(r,800*(i+1)));
+ }
+ return last;
+}
 
 const layers=[
  {id:'NDVI',name:'NDVI',group:'Vegetation',desc:'Vegetation greenness',active:true},
@@ -48,12 +62,26 @@ export default function GeoEco(){
    if(!aoi?.geometry){setResult({status:'error',note:'Upload GeoJSON or zipped Shapefile before running analysis.'});return;}
    setLayer(target);setRunning(true);setResult({status:'running',note:'Processing '+target+' in Google Earth Engine…'});
    try{
-     const mapReq=fetch('/api/geoeco/analysis',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({aoi:aoi.geometry,start,end,layer:target})});
-     const timeReq=fetch('/api/geoeco/temporal',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({start,end,aoi:aoi.geometry,aoiName:aoi.name})});
-     const [mapRes,timeRes]=await Promise.all([mapReq,timeReq]);
-     const [data,timeData]=await Promise.all([safeJson(mapRes),safeJson(timeRes)]);
-     setResult(data);setTemporal(timeData);
-   }catch(e:any){setResult({status:'error',note:e?.message||String(e)})}finally{setRunning(false)}
+     setTemporal({status:'running',note:'Waiting for map result before temporal analysis…'});
+     const data=await fetchJsonWithRetry('/api/geoeco/analysis',{
+       method:'POST',headers:{'Content-Type':'application/json'},
+       body:JSON.stringify({aoi:aoi.geometry,start,end,layer:target})
+     },3);
+     setResult(data);
+     if(data?.status!=='success'){
+       setTemporal({status:'error',note:'Temporal analysis was not started because map generation failed.'});
+       return;
+     }
+     const timeData=await fetchJsonWithRetry('/api/geoeco/temporal',{
+       method:'POST',headers:{'Content-Type':'application/json'},
+       body:JSON.stringify({start,end,aoi:aoi.geometry,aoiName:aoi.name})
+     },3);
+     setTemporal(timeData);
+   }catch(e:any){
+     const note=e?.message||String(e);
+     setResult({status:'error',note});
+     setTemporal({status:'error',note});
+   }finally{setRunning(false)}
  }
 
  return <main className={styles.shell}>
