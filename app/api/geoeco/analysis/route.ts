@@ -65,7 +65,7 @@ function indicatorImage(name:string,start:string,end:string,geom:any){
 function minMax(img:any,geom:any,scale:number){
   return img.reduceRegion({reducer:ee.Reducer.minMax(),geometry:geom,scale,maxPixels:1e8,bestEffort:true,tileScale:4});
 }
-function normalize(img:any,min:any,max:any){return img.subtract(min).divide(ee.Number(max).subtract(min)).clamp(0,1)}
+function normalize(img:any,min:any,max:any){const d=ee.Number(max).subtract(min).abs().max(1e-6);return img.subtract(min).divide(d).clamp(0,1)}
 function modelImage(name:string,start:string,end:string,geom:any){
   const dem=ee.Image('USGS/SRTMGL1_003').select('elevation').clip(geom);
   const slope=ee.Terrain.slope(dem);
@@ -101,7 +101,7 @@ function classified(img:any,thresholds:number[]){
   return cls.rename('class').updateMask(img.mask());
 }
 async function thumb(img:any,geom:any,palette:string[],min:number,max:number){
-  return img.getThumbURL({region:geom,bbox:null,dimensions:1200,format:'png',min,max,palette});
+  return img.getThumbURL({region:geom.bounds(100),dimensions:900,format:'png',min,max,palette});
 }
 async function areaByClass(cls:any,geom:any,scale:number){
   const grouped=ee.Image.pixelArea().divide(10000).rename('ha').addBands(cls).reduceRegion({
@@ -122,21 +122,26 @@ export async function POST(req:NextRequest){
   if(!p?.aoi?.features?.length)return NextResponse.json({status:'error',note:'AOI required'},{status:400});
   await initEE();
   const geom=aoiFC(p.aoi).geometry();
+  const areaHa=Number(await evalEE(geom.area(1).divide(10000)));
+  const simplifyMeters=areaHa>1000000?250:(areaHa>250000?150:(areaHa>50000?75:30));
+  const statGeom=geom.simplify(simplifyMeters);
   const start=String(p.start||'2024-01-01'),end=String(p.end||'2026-12-31');
   const layer=String(p.layer||'NDVI').toUpperCase();
   const isModel=['FLOOD','LANDSLIDE','EROSION'].includes(layer);
-  const img=isModel?modelImage(layer,start,end,geom):indicatorImage(layer,start,end,geom);
-  const scale=layer==='LST'?60:(isModel?90:20);
-  const stats=await evalEE(img.reduceRegion({reducer:ee.Reducer.mean().combine({reducer2:ee.Reducer.stdDev(),sharedInputs:true}).combine({reducer2:ee.Reducer.percentile([20,40,60,80]),sharedInputs:true}),geometry:geom,scale,maxPixels:1e8,bestEffort:true,tileScale:4}));
+  const img=isModel?modelImage(layer,start,end,statGeom):indicatorImage(layer,start,end,statGeom);
+  const baseScale=layer==='LST'?60:(isModel?90:20);
+  const adaptiveScale=areaHa>1000000?300:(areaHa>250000?180:(areaHa>50000?90:baseScale));
+  const scale=Math.max(baseScale,adaptiveScale);
+  const stats=await evalEE(img.reduceRegion({reducer:ee.Reducer.mean().combine({reducer2:ee.Reducer.stdDev(),sharedInputs:true}).combine({reducer2:ee.Reducer.percentile([20,40,60,80]),sharedInputs:true}),geometry:statGeom,scale,maxPixels:5e7,bestEffort:true,tileScale:8}));
   const thresholds=isModel?[.2,.4,.6,.8]:[stats.value_p20,stats.value_p40,stats.value_p60,stats.value_p80].map(Number);
   if(thresholds.some((x:number)=>!Number.isFinite(x)))throw new Error('Insufficient valid pixels for classification');
   const cls=classified(img,thresholds);
   const palette=isModel?palettes.risk:(layer==='LST'?palettes.temp:palettes.index);
-  const [imageUrl,classArea]=await Promise.all([thumb(cls,geom,palette,1,5),areaByClass(cls,geom,scale)]);
+  const [imageUrl,classArea]=await Promise.all([thumb(cls,statGeom,palette,1,5),areaByClass(cls,statGeom,scale)]);
   const labels=isModel?['Very Low','Low','Moderate','High','Very High']:['Very Low','Low','Moderate','High','Very High'];
   const legend=labels.map((label,i)=>({class:i+1,label,color:palette[i],min:i===0?null:thresholds[i-1],max:i===4?null:thresholds[i]}));
   return NextResponse.json({
-   status:'success',layer,imageUrl,bounds:boundsFromGeoJSON(p.aoi),legend,
+   status:'success',layer,imageUrl,bounds:boundsFromGeoJSON(p.aoi),legend,areaHa,
    stats:{mean:stats.value_mean,stdDev:stats.value_stdDev,thresholds},
    classArea:classArea.map((g:any)=>({class:g.class,areaHa:g.sum})),
    methodology:isModel?{
@@ -144,7 +149,7 @@ export async function POST(req:NextRequest){
      weights:layer==='FLOOD'?{lowElevation:.35,lowSlope:.25,rainfall:.25,lowNDVI:.15}:layer==='LANDSLIDE'?{slope:.45,rainfall:.30,elevation:.10,lowNDVI:.15}:{slope:.45,rainfall:.30,lowNDVI:.25},
      validation:'Not locally validated'
    }:{type:'relative AOI quintile visualization',classes:'P20/P40/P60/P80',validation:'Spectral index; no local ecological threshold implied'},
-   provenance:{analysisVersion:'GEOECO-ENGINE-1.2.0',dataset:layer==='LST'?'Landsat 8/9 Collection 2 Level-2':isModel?'SRTM + CHIRPS + Sentinel-2':'Sentinel-2 SR Harmonized',start,end,scale}
+   provenance:{analysisVersion:'GEOECO-ENGINE-1.2.1',dataset:layer==='LST'?'Landsat 8/9 Collection 2 Level-2':isModel?'SRTM + CHIRPS + Sentinel-2':'Sentinel-2 SR Harmonized',start,end,scale,areaHa,simplifyMeters,scalePolicy:'adaptive-by-AOI-area'}
   });
  }catch(e:any){return NextResponse.json({status:'error',note:e?.message||String(e)},{status:500})}
 }
