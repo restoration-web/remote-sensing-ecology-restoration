@@ -37,8 +37,10 @@ function s2Indices(img:any){
   const ndre=img.normalizedDifference(['B8A','B5']).rename('NDRE');
   const ndwi=img.normalizedDifference(['B3','B8']).rename('NDWI');
   const ndmi=img.normalizedDifference(['B8A','B11']).rename('NDMI');
+  const evi=img.expression('2.5*((n-r)/(n+6*r-7.5*b+1))',{n:img.select('B8'),r:img.select('B4'),b:img.select('B2')}).rename('EVI');
+  const savi=img.expression('1.5*((n-r)/(n+r+0.5))',{n:img.select('B8'),r:img.select('B4')}).rename('SAVI');
   const bsi=img.expression('((s+r)-(n+b))/((s+r)+(n+b))',{s:img.select('B11'),r:img.select('B4'),n:img.select('B8'),b:img.select('B2')}).rename('BSI');
-  return ee.Image.cat([ndvi,ndre,ndwi,ndmi,bsi]);
+  return ee.Image.cat([ndvi,ndre,ndwi,ndmi,evi,savi,bsi]);
 }
 function prepLST(img:any){
   const qa=img.select('QA_PIXEL');
@@ -78,7 +80,7 @@ export async function POST(req:NextRequest){
       const s2=ee.Image(ee.Algorithms.If(
         s2c.size().gt(0),
         s2Indices(s2c.median()),
-        ee.Image.constant([0,0,0,0,0]).rename(['NDVI','NDRE','NDWI','NDMI','BSI']).updateMask(ee.Image.constant(0))
+        ee.Image.constant([0,0,0,0,0,0,0]).rename(['NDVI','NDRE','NDWI','NDMI','EVI','SAVI','BSI']).updateMask(ee.Image.constant(0))
       ));
 
       const lc=ee.ImageCollection('LANDSAT/LC08/C02/T1_L2')
@@ -115,6 +117,8 @@ export async function POST(req:NextRequest){
       NDRE:finite(r.NDRE)?Number(r.NDRE):null,
       NDWI:finite(r.NDWI)?Number(r.NDWI):null,
       NDMI:finite(r.NDMI)?Number(r.NDMI):null,
+      EVI:finite(r.EVI)?Number(r.EVI):null,
+      SAVI:finite(r.SAVI)?Number(r.SAVI):null,
       BSI:finite(r.BSI)?Number(r.BSI):null,
       LST:finite(r.LST)?Number(r.LST):null,
       Rainfall:finite(r.Rainfall)?Number(r.Rainfall):null
