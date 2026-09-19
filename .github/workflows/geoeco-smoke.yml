@@ -119,3 +119,38 @@ jobs:
           echo
           test "$HTTP" = "200"
           python -c "import json; x=json.load(open('/tmp/fire-zero-result.json')); assert x.get('status')=='success',x; assert x.get('summary',{}).get('count')==0,x; assert x.get('goldenTime') is None,x; print('ZERO HOTSPOT HANDLED')"
+
+
+      - name: Verify susceptibility layers
+        run: |
+          set -euo pipefail
+          for LAYER in EROSION FLOOD LANDSLIDE; do
+            cat >/tmp/hazard.json <<JSON
+          {
+            "action":"map",
+            "start":"2024-01-01",
+            "end":"2026-09-19",
+            "layer":"$LAYER",
+            "aoi":{
+              "type":"FeatureCollection",
+              "features":[{
+                "type":"Feature",
+                "properties":{},
+                "geometry":{
+                  "type":"Polygon",
+                  "coordinates":[[
+                    [114.55,-3.45],[114.75,-3.45],[114.75,-3.25],[114.55,-3.25],[114.55,-3.45]
+                  ]]
+                }
+              }]
+            }
+          }
+          JSON
+            curl --fail --show-error --silent --max-time 300 \
+              -H 'content-type: application/json' \
+              --data-binary @/tmp/hazard.json \
+              https://geospatial-restoration-q1.vercel.app/api/geoeco_engine \
+              -o /tmp/hazard-result.json
+            cat /tmp/hazard-result.json
+            python -c "import json; x=json.load(open('/tmp/hazard-result.json')); assert x.get('status')=='success',x; assert x.get('layer')=='$LAYER',x; assert x.get('imageUrl'),x; assert len(x.get('legend') or [])==5,x; assert len(x.get('classArea') or [])>0,x; assert x.get('methodology',{}).get('type')=='relative screening susceptibility',x"
+          done
