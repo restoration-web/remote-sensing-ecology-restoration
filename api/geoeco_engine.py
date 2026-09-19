@@ -277,6 +277,8 @@ def haversine_km(a,b):
 
 def fire_analysis(p):
     geom=aoi_geom(p["aoi"])
+    context_buffer_km=min(100,max(0,float(p.get("contextBufferKm",25))))
+    context_geom=geom.buffer(context_buffer_km*1000)
     end=str(p.get("end","2026-09-19"))
     days=min(30,max(1,int(p.get("days",7))))
     response_window=min(720,max(15,int(p.get("responseWindowMinutes",60))))
@@ -284,7 +286,7 @@ def fire_analysis(p):
     s=e.advance(-days,"day")
 
     snpp=(ee.ImageCollection("NASA/LANCE/SNPP_VIIRS/C2")
-          .filterDate(s,e).filterBounds(geom))
+          .filterDate(s,e).filterBounds(context_geom))
     noaa=(ee.ImageCollection("NASA/LANCE/NOAA20_VIIRS/C2")
           .filterDate(s,e).filterBounds(geom))
     col=snpp.merge(noaa).sort("system:time_start")
@@ -293,7 +295,7 @@ def fire_analysis(p):
     empty_result={
         "status":"success",
         "source":"NASA FIRMS / VIIRS 375 m NRT via Google Earth Engine",
-        "period":{"days":days,"end":end},
+        "period":{"days":days,"end":end,"contextBufferKm":context_buffer_km},
         "bounds":bounds_geojson(p["aoi"]),
         "points":[],
         "summary":{"count":0,"frpMean":None,"frpMax":None,"highConfidenceCount":0,"nominalOrHighCount":0,"latestEpoch":None},
@@ -301,24 +303,25 @@ def fire_analysis(p):
         "spreadProxy":{"available":False,"note":"No VIIRS hotspot detections were found in the AOI and selected period."},
         "vegetationContext":None,
         "scientificNote":"No active-fire detections were found for the AOI and selected period. Zero detections do not prove that no fire occurred; cloud, overpass timing, sensor limits, and fire size can affect detection.",
-        "provenance":{"engine":"Python Earth Engine API","version":"GEOECO-PY-FIRE-1.0.0","datasets":["NASA/LANCE/SNPP_VIIRS/C2","NASA/LANCE/NOAA20_VIIRS/C2"],"hotspotResolutionM":375,"responseWindowMinutes":response_window,"imageCount":image_count,"validHotspotPixels":0}
+        "provenance":{"engine":"Python Earth Engine API","version":"GEOECO-PY-FIRE-1.1.0","datasets":["NASA/LANCE/SNPP_VIIRS/C2","NASA/LANCE/NOAA20_VIIRS/C2"],"hotspotResolutionM":375,"responseWindowMinutes":response_window,"imageCount":image_count,"validHotspotPixels":0}
     }
     if image_count<=0:
         return empty_result
 
-    frp_max=col.select("frp").max().rename("frp").clip(geom)
+    frp_max=col.select("frp").max().rename("frp").clip(context_geom)
     valid_dict=(frp_max.gt(0).selfMask().reduceRegion(
-        reducer=ee.Reducer.count(),geometry=geom,scale=375,maxPixels=10000000,
+        reducer=ee.Reducer.count(),geometry=context_geom,scale=375,maxPixels=10000000,
         bestEffort=True,tileScale=4).getInfo() or {})
     valid_pixels=int(valid_dict.get("frp") or 0)
     if valid_pixels<=0:
         return empty_result
 
     hotspot_mask=frp_max.gt(0).selfMask()
-    latest=col.qualityMosaic("acq_epoch").clip(geom)
+    latest=col.qualityMosaic("acq_epoch").clip(context_geom)
     fire_bands=latest.select(["frp","confidence","Bright_ti4","acq_epoch"]).updateMask(hotspot_mask)
-    pts=(fire_bands.addBands(ee.Image.pixelLonLat()).sample(
-        region=geom,scale=375,geometries=True,numPixels=600,seed=42,tileScale=4).getInfo())
+    inside=ee.Image.constant(1).clip(geom).unmask(0).rename("insideAOI")
+    pts=(fire_bands.addBands(inside).addBands(ee.Image.pixelLonLat()).sample(
+        region=context_geom,scale=375,geometries=True,numPixels=900,seed=42,tileScale=4).getInfo())
 
     points=[]
     for feat in pts.get("features",[]):
@@ -331,7 +334,8 @@ def fire_analysis(p):
             "lon":float(co[0]),"lat":float(co[1]),"frp":frp,
             "confidence":int(pr.get("confidence") if pr.get("confidence") is not None else -1),
             "brightness":float(pr.get("Bright_ti4") or 0),
-            "epoch":float(pr.get("acq_epoch") or 0)
+            "epoch":float(pr.get("acq_epoch") or 0),
+            "insideAOI":bool((pr.get("insideAOI") or 0)>=0.5)
         })
 
     temporal=sorted([x for x in points if x["epoch"]>0],key=lambda x:x["epoch"])
@@ -366,15 +370,19 @@ def fire_analysis(p):
     context=None
     if points:
         s2,_=s2_composite(ee.Date(end).advance(-45,"day").format("YYYY-MM-dd").getInfo(),
-                          ee.Date(end).advance(1,"day").format("YYYY-MM-dd").getInfo(),geom)
+                          ee.Date(end).advance(1,"day").format("YYYY-MM-dd").getInfo(),context_geom)
         idx=indices(s2).select(["NDVI","NDMI","BSI"])
         hctx=idx.updateMask(hotspot_mask.reproject(crs="EPSG:4326",scale=375))
         context=(hctx.reduceRegion(
             reducer=ee.Reducer.mean().combine(ee.Reducer.stdDev(),sharedInputs=True),
-            geometry=geom,scale=750,maxPixels=5000000,bestEffort=True,tileScale=8).getInfo() or {})
+            geometry=context_geom,scale=750,maxPixels=5000000,bestEffort=True,tileScale=8).getInfo() or {})
 
+    inside_points=[x for x in points if x.get("insideAOI")]
+    context_points=[x for x in points if not x.get("insideAOI")]
     summary={
         "count":len(points),
+        "insideAOICount":len(inside_points),
+        "contextCount":len(context_points),
         "frpMean":(sum(x["frp"] for x in points)/len(points) if points else None),
         "frpMax":(max(x["frp"] for x in points) if points else None),
         "highConfidenceCount":sum(1 for x in points if x["confidence"]>=2),
