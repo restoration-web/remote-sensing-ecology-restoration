@@ -285,6 +285,7 @@ function GeoMap({aoi,result,perspective,basemap='OSM',showAOI=true,showRaster=tr
   const map=L.map(el.current,{zoomControl:true}).setView([-2.2,115.5],6);
   const bm=basemaps[basemap]||basemaps.OSM;
   baseLayer.current=L.tileLayer(bm.url,{maxZoom:19,attribution:bm.attribution}).addTo(map);
+  L.control.scale({imperial:false,position:'bottomleft'}).addTo(map);
   mapRef.current=map;setTimeout(()=>map.invalidateSize(),150);
  })();return()=>{dead=true;if(mapRef.current){mapRef.current.remove();mapRef.current=null}}},[]);
  useEffect(()=>{let dead=false;(async()=>{const map=mapRef.current;if(!map)return;const L=await import('leaflet');if(dead)return;if(baseLayer.current)map.removeLayer(baseLayer.current);const bm=basemaps[basemap]||basemaps.OSM;baseLayer.current=L.tileLayer(bm.url,{maxZoom:19,attribution:bm.attribution}).addTo(map);baseLayer.current.bringToBack?.();})();return()=>{dead=true}},[basemap]);
@@ -307,7 +308,7 @@ function GeoMap({aoi,result,perspective,basemap='OSM',showAOI=true,showRaster=tr
     setOverlayState('idle');
   }
  })();return()=>{dead=true}},[result,showRaster,rasterOpacity]);
- useEffect(()=>{let dead=false;(async()=>{const map=mapRef.current;if(!map)return;const L=await import('leaflet');if(dead)return;if(hotspotLayer.current){map.removeLayer(hotspotLayer.current);hotspotLayer.current=null}if(hotspots?.length){const g=L.layerGroup();hotspots.forEach((h:any)=>{const c=h.confidence>=2?'#d7191c':h.confidence>=1?'#fdae61':'#ffffbf';L.circleMarker([h.lat,h.lon],{radius:5,color:'#7f0000',weight:1,fillColor:c,fillOpacity:.9}).bindPopup('FRP: '+Number(h.frp||0).toFixed(1)+' MW<br/>Confidence: '+(h.confidence===2?'High':h.confidence===1?'Nominal':'Low')).addTo(g)});g.addTo(map);hotspotLayer.current=g}})();return()=>{dead=true}},[hotspots]);
+ useEffect(()=>{let dead=false;(async()=>{const map=mapRef.current;if(!map)return;const L=await import('leaflet');if(dead)return;if(hotspotLayer.current){map.removeLayer(hotspotLayer.current);hotspotLayer.current=null}if(hotspots?.length){const g=L.layerGroup();hotspots.forEach((h:any)=>{const c=h.confidence>=2?'#d7191c':h.confidence>=1?'#fdae61':'#ffffbf';L.circleMarker([h.lat,h.lon],{radius:5,color:'#7f0000',weight:1,fillColor:c,fillOpacity:.9}).bindPopup('FRP: '+Number(h.frp||0).toFixed(1)+' MW<br/>Confidence: '+(h.confidence===2?'High':h.confidence===1?'Nominal':'Low')).addTo(g)});g.addTo(map);hotspotLayer.current=g;const hb=(g as any).getBounds?.();if(hb&&hb.isValid?.())map.fitBounds(hb.pad(.12),{maxZoom:11})}})();return()=>{dead=true}},[hotspots]);
  return <div className={perspective?styles.perspectiveFrame:styles.flatFrame}><div ref={el} className={styles.realMap}/>{result?.legend&&<div className={styles.floatingLegend}><b>{result.layer}</b>{result.legend.map(x=><div key={x.class}><i style={{background:x.color}}></i><span>{x.label}</span></div>)}</div>}<div className={styles.overlayStatus} data-state={overlayState}>{overlayState==='loaded'?'Raster loaded':overlayState==='loading'?'Loading raster…':overlayState==='error'?'Raster failed to load':'Base map only'}</div></div>
 }
 
@@ -391,12 +392,12 @@ function SpatialStatsDashboard({data}:any){
    <div className={styles.sectionHead}><div><h2>Distribution graphics</h2><p>Spatial distributions from the reproducible AOI sample.</p></div><span className={styles.pill}>Seed 42</span></div>
    <div className={styles.histGrid}>
     {['NDVI','NDRE','NDMI','BSI','LST','Rainfall'].filter(k=>keys.includes(k)).map(k=><Histogram key={k} rows={rows} valueKey={k}/>)}
-   </div>
+   </div><EcologicalNote type="distribution"/>
   </section>
 
   <div className={styles.grid2}>
-   <section className={styles.card}><h2>Correlation matrix</h2><CorrelationMatrix rows={rows} keys={keys}/></section>
-   <section className={styles.card}><h2>Key bivariate regression models</h2><RegressionTable rows={focus}/></section>
+   <section className={styles.card}><h2>Correlation matrix</h2><CorrelationMatrix rows={rows} keys={keys}/><EcologicalNote type="correlation"/></section>
+   <section className={styles.card}><h2>Key bivariate regression models</h2><RegressionTable rows={focus}/><EcologicalNote type="regression"/></section>
   </div>
 
   <section className={styles.card}><h2>Scatterplots + fitted regression</h2><div className={styles.scatterGrid}>
@@ -408,10 +409,10 @@ function SpatialStatsDashboard({data}:any){
    <Scatter rows={rows} xKey="LST" yKey="NDRE"/>
    <Scatter rows={rows} xKey="LST" yKey="NDMI"/>
    <Scatter rows={rows} xKey="LST" yKey="BSI"/>
-  </div></section>
+  </div><EcologicalNote type="regression"/></section>
 
   <div className={styles.grid2}>
-   <section className={styles.card}><h2>Multiple regression model</h2><MultipleModel model={multi}/></section>
+   <section className={styles.card}><h2>Multiple regression model</h2><MultipleModel model={multi}/><EcologicalNote type="multiple"/></section>
    <section className={styles.card}><h2>Reproducibility & limitations</h2><div className={styles.kv}>
     <div><span>Analysis ID</span><b>{data.analysisId||'—'}</b></div>
     <div><span>Method version</span><b>{data.provenance?.version||'—'}</b></div>
@@ -422,9 +423,9 @@ function SpatialStatsDashboard({data}:any){
    </div><div className={styles.notice}>{data.limitations}</div></section>
   </div>
 
-  <section className={styles.card}><h2>Descriptive statistics</h2><div className={styles.tableWrap}><table className={styles.dataTable}><thead><tr><th>Variable</th><th>n</th><th>Mean</th><th>SD</th><th>Min</th><th>Q1</th><th>Median</th><th>Q3</th><th>Max</th></tr></thead><tbody>{desc.map((d:any)=><tr key={d.key}><td>{d.key}</td><td>{d.n}</td><td>{nfmt(d.mean)}</td><td>{nfmt(d.sd)}</td><td>{nfmt(d.min)}</td><td>{nfmt(d.q1)}</td><td>{nfmt(d.median)}</td><td>{nfmt(d.q3)}</td><td>{nfmt(d.max)}</td></tr>)}</tbody></table></div></section>
+  <section className={styles.card}><h2>Descriptive statistics</h2><div className={styles.tableWrap}><table className={styles.dataTable}><thead><tr><th>Variable</th><th>n</th><th>Mean</th><th>SD</th><th>Min</th><th>Q1</th><th>Median</th><th>Q3</th><th>Max</th></tr></thead><tbody>{desc.map((d:any)=><tr key={d.key}><td>{d.key}</td><td>{d.n}</td><td>{nfmt(d.mean)}</td><td>{nfmt(d.sd)}</td><td>{nfmt(d.min)}</td><td>{nfmt(d.q1)}</td><td>{nfmt(d.median)}</td><td>{nfmt(d.q3)}</td><td>{nfmt(d.max)}</td></tr>)}</tbody></table></div><EcologicalNote type="descriptive"/></section>
 
-  <section className={styles.card}><h2>Sample data table</h2><p>Showing the first {Math.min(rows.length,100)} of {rows.length} reproducible spatial samples.</p><div className={styles.tableWrap}><table className={styles.dataTable}><thead><tr><th>#</th>{keys.map((k:string)=><th key={k}>{k}</th>)}</tr></thead><tbody>{rows.slice(0,100).map((r:any,i:number)=><tr key={i}><td>{i+1}</td>{keys.map((k:string)=><td key={k}>{nfmt(r[k])}</td>)}</tr>)}</tbody></table></div></section>
+  <section className={styles.card}><h2>Sample data table</h2><p>Showing the first {Math.min(rows.length,100)} of {rows.length} reproducible spatial samples.</p><div className={styles.tableWrap}><table className={styles.dataTable}><thead><tr><th>#</th>{keys.map((k:string)=><th key={k}>{k}</th>)}</tr></thead><tbody>{rows.slice(0,100).map((r:any,i:number)=><tr key={i}><td>{i+1}</td>{keys.map((k:string)=><td key={k}>{nfmt(r[k])}</td>)}</tr>)}</tbody></table></div><EcologicalNote type="sample"/></section>
  </div>
 }
 
@@ -434,10 +435,12 @@ function Histogram({rows,valueKey}:{rows:any[];valueKey:string}){
  let min=Math.min(...vals),max=Math.max(...vals);if(min===max){min-=.5;max+=.5}
  const nBins=12,bins=Array(nBins).fill(0);
  for(const v of vals){const idx=Math.min(nBins-1,Math.max(0,Math.floor((v-min)/(max-min)*nBins)));bins[idx]++}
- const peak=Math.max(...bins,1);
- return <div className={styles.histCard}><div className={styles.scatterTitle}><b>{valueKey}</b><span>n={vals.length}</span></div><div className={styles.histBars}>{bins.map((b,i)=><div key={i} title={String(b)} style={{height:(b/peak*100)+'%'}}></div>)}</div><div className={styles.histAxis}><span>{nfmt(min,2)}</span><span>{nfmt(max,2)}</span></div></div>
+ const peak=Math.max(...bins,1),W=360,H=220,p=30,id='hist-'+valueKey.replace(/[^A-Za-z0-9]/g,'');
+ return <div className={styles.histCard}><div className={styles.scatterTitle}><b>{valueKey}</b><span>n={vals.length}</span></div>
+  <svg id={id} viewBox={'0 0 '+W+' '+H} aria-label={valueKey+' histogram'}>{bins.map((b,i)=>{const bw=(W-2*p)/nBins,h=b/peak*(H-2*p);return <rect key={i} x={p+i*bw+1} y={H-p-h} width={Math.max(1,bw-2)} height={h} className={styles.histRect}/>})}<line x1={p} y1={H-p} x2={W-p} y2={H-p} className={styles.axis}/><text x={p} y={H-8} fontSize="10">{nfmt(min,2)}</text><text x={W-p-28} y={H-8} fontSize="10">{nfmt(max,2)}</text></svg>
+  <ChartDownloadButtons svgId={id} filename={'GeoEco_'+valueKey+'_Histogram'}/>
+ </div>
 }
-
 function invertMatrix(M:number[][]){
  const n=M.length,A=M.map((r,i)=>[...r,...Array.from({length:n},(_,j)=>i===j?1:0)]);
  for(let i=0;i<n;i++){
@@ -539,14 +542,16 @@ function SimpleLineChart({rows,keys}:{rows:any[];keys:string[]}){
  const vals=rows.flatMap(r=>keys.map(k=>r[k])).filter(isFiniteValue).map(Number);if(vals.length<2)return <div className={styles.empty}>Insufficient data</div>;
  const W=620,H=220,p=30;let min=Math.min(...vals),max=Math.max(...vals);if(min===max){min-=1;max+=1}
  const sx=(i:number)=>p+(rows.length<=1?0:i*(W-2*p)/(rows.length-1)),sy=(v:number)=>H-p-(v-min)*(H-2*p)/(max-min);
- return <div className={styles.svgWrap}><svg viewBox={'0 0 '+W+' '+H}><line x1={p} y1={H-p} x2={W-p} y2={H-p} className={styles.axis}/><line x1={p} y1={p} x2={p} y2={H-p} className={styles.axis}/>{keys.map((k,ki)=>{const pts=rows.map((r,i)=>isFiniteValue(r[k])?sx(i)+','+sy(Number(r[k])):null).filter(Boolean).join(' ');return <polyline key={k} points={pts} fill="none" className={styles['series'+(ki%5)]}/>})}</svg><div className={styles.chartLegend}>{keys.map((k,i)=><span key={k}><i className={styles['seriesDot'+(i%5)]}></i>{k}</span>)}</div></div>
+ const id='line-'+keys.join('-').replace(/[^A-Za-z0-9-]/g,'');
+ return <div className={styles.svgWrap}><svg id={id} viewBox={'0 0 '+W+' '+H}><line x1={p} y1={H-p} x2={W-p} y2={H-p} className={styles.axis}/><line x1={p} y1={p} x2={p} y2={H-p} className={styles.axis}/>{keys.map((k,ki)=>{const pts=rows.map((r,i)=>isFiniteValue(r[k])?sx(i)+','+sy(Number(r[k])):null).filter(Boolean).join(' ');return <polyline key={k} points={pts} fill="none" className={styles['series'+(ki%5)]}/>})}</svg><div className={styles.chartLegend}>{keys.map((k,i)=><span key={k}><i className={styles['seriesDot'+(i%5)]}></i>{k}</span>)}</div><ChartDownloadButtons svgId={id} filename={'GeoEco_'+keys.join('_')+'_Trend'}/></div>
 }
 function Scatter({rows,xKey,yKey}:{rows:any[];xKey:string;yKey:string}){
  const m=regression(rows,xKey,yKey),pts=rows.filter(r=>isFiniteValue(r[xKey])&&isFiniteValue(r[yKey])).map(r=>({x:Number(r[xKey]),y:Number(r[yKey])}));if(pts.length<3)return <div className={styles.scatterCard}><b>{yKey} vs {xKey}</b><div className={styles.empty}>Insufficient data</div></div>;
  const W=300,H=210,p=30;let xmin=Math.min(...pts.map(q=>q.x)),xmax=Math.max(...pts.map(q=>q.x)),ymin=Math.min(...pts.map(q=>q.y)),ymax=Math.max(...pts.map(q=>q.y));if(xmin===xmax){xmin-=1;xmax+=1}if(ymin===ymax){ymin-=1;ymax+=1}
  const sx=(v:number)=>p+(v-xmin)*(W-2*p)/(xmax-xmin),sy=(v:number)=>H-p-(v-ymin)*(H-2*p)/(ymax-ymin);
  const y1=isFiniteValue(m.slope)?Number(m.intercept)+Number(m.slope)*xmin:null,y2=isFiniteValue(m.slope)?Number(m.intercept)+Number(m.slope)*xmax:null;
- return <div className={styles.scatterCard}><div className={styles.scatterTitle}><b>{yKey} vs {xKey}</b><span>r={nfmt(m.r)} • R²={nfmt(m.r2)}</span></div><svg viewBox={'0 0 '+W+' '+H}><line x1={p} y1={H-p} x2={W-p} y2={H-p} className={styles.axis}/><line x1={p} y1={p} x2={p} y2={H-p} className={styles.axis}/>{pts.map((q,i)=><circle key={i} cx={sx(q.x)} cy={sy(q.y)} r="4" className={styles.point}/>)}{y1!==null&&y2!==null&&<line x1={sx(xmin)} y1={sy(y1)} x2={sx(xmax)} y2={sy(y2)} className={styles.regLine}/>}</svg></div>
+ const id='scatter-'+yKey+'-'+xKey;
+ return <div className={styles.scatterCard}><div className={styles.scatterTitle}><b>{yKey} vs {xKey}</b><span>r={nfmt(m.r)} • R²={nfmt(m.r2)}</span></div><svg id={id} viewBox={'0 0 '+W+' '+H}><line x1={p} y1={H-p} x2={W-p} y2={H-p} className={styles.axis}/><line x1={p} y1={p} x2={p} y2={H-p} className={styles.axis}/>{pts.map((q,i)=><circle key={i} cx={sx(q.x)} cy={sy(q.y)} r="4" className={styles.point}/>)}{y1!==null&&y2!==null&&<line x1={sx(xmin)} y1={sy(y1)} x2={sx(xmax)} y2={sy(y2)} className={styles.regLine}/>}</svg><ChartDownloadButtons svgId={id} filename={'GeoEco_'+yKey+'_vs_'+xKey}/></div>
 }
 function hashString(x:string){let h=2166136261;for(let i=0;i<x.length;i++){h^=x.charCodeAt(i);h=Math.imul(h,16777619)}return (h>>>0).toString(16).padStart(8,'0')}
 function nfmt(v:any,d=3){return isFiniteValue(v)?Number(v).toFixed(d):'NA'}
@@ -558,6 +563,7 @@ function downloadSvg(svgId:string,filename:string,format:'png'|'jpg'){
  const blob=new Blob([source],{type:'image/svg+xml;charset=utf-8'});const url=URL.createObjectURL(blob);
  const img=new Image();img.onload=()=>{const canvas=document.createElement('canvas');canvas.width=1600;canvas.height=900;const ctx=canvas.getContext('2d');if(!ctx)return;ctx.fillStyle='#ffffff';ctx.fillRect(0,0,canvas.width,canvas.height);ctx.drawImage(img,0,0,canvas.width,canvas.height);URL.revokeObjectURL(url);const a=document.createElement('a');a.download=filename+'.'+format;a.href=canvas.toDataURL(format==='png'?'image/png':'image/jpeg',.95);a.click()};img.src=url;
 }
+function ChartDownloadButtons({svgId,filename}:any){return <div className={styles.chartDownloads}><button onClick={()=>downloadSvg(svgId,filename,'png')}>Download PNG</button><button onClick={()=>downloadSvg(svgId,filename,'jpg')}>Download JPG</button></div>}
 function EcologicalNote({type}:any){
  const notes:any={
   distribution:'Distribution shape helps identify heterogeneity, skewness, and possible ecological thresholds within the AOI. Wide distributions may indicate strong spatial variation in vegetation, moisture, thermal conditions, or disturbance.',
