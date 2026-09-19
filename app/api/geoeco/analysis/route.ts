@@ -1,5 +1,5 @@
 import {NextRequest,NextResponse} from 'next/server';
-import {getEarthEngine} from '@/lib/earthEngineRuntime';
+import {getEarthEngine} from '../../../../lib/earthEngineRuntime';
 
 export const runtime='nodejs';
 export const maxDuration=300;
