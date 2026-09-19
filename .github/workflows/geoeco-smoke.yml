@@ -34,8 +34,7 @@ jobs:
           curl --fail --show-error --silent --max-time 300             -H 'content-type: application/json'             --data-binary @/tmp/map-payload.json             https://geospatial-restoration-q1.vercel.app/api/geoeco_engine             -o /tmp/map.json
           cat /tmp/map.json
           python -c "import json; x=json.load(open('/tmp/map.json')); assert x.get('status')=='success',x; assert x.get('imageUrl'),x; assert len(x.get('legend') or [])==5,x; assert len(x.get('classArea') or [])>0,x"
-          IMG=$(python -c "import json; print(json.load(open('/tmp/map.json'))['imageUrl'])")
-          curl --fail --show-error --silent --max-time 120 "$IMG" -o /tmp/result.png
+          python -c "import json,base64; x=json.load(open('/tmp/map.json')); u=x['imageUrl']; assert u.startswith('data:image/png;base64,'),u[:40]; open('/tmp/result.png','wb').write(base64.b64decode(u.split(',',1)[1]))"
           test -s /tmp/result.png
           file /tmp/result.png | grep -q "PNG image data"
           echo "PNG_BYTES=$(stat -c%s /tmp/result.png)"
@@ -79,7 +78,7 @@ jobs:
             }
           }
           JSON
-          curl --fail --show-error --silent --retry 3 --retry-delay 2 --retry-all-errors --max-time 300             -H 'content-type: application/json'             --data-binary @/tmp/fire.json             https://geospatial-restoration-q1.vercel.app/api/geoeco/fire             -o /tmp/fire-result.json
+          curl --fail --show-error --silent --retry 3 --retry-delay 2 --retry-all-errors --max-time 300             -H 'content-type: application/json'             --data-binary @/tmp/fire.json             https://geospatial-restoration-q1.vercel.app/api/geoeco_engine             -o /tmp/fire-result.json
           cat /tmp/fire-result.json
           python -c "import json; x=json.load(open('/tmp/fire-result.json')); assert x.get('status')=='success',x; assert 'summary' in x,x; assert 'spreadProxy' in x,x; assert 'provenance' in x,x; print('HOTSPOTS',x.get('summary',{}).get('count'))"
 
