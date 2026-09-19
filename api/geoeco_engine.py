@@ -1,5 +1,5 @@
 from http.server import BaseHTTPRequestHandler
-import json, os, math, hashlib, traceback
+import json, os, math, hashlib, traceback, base64, urllib.request
 
 import ee
 
@@ -200,20 +200,25 @@ def map_analysis(p):
     palette = (["#2c7bb6","#abd9e9","#ffffbf","#fdae61","#d7191c"] if is_model else
                (["#313695","#74add1","#ffffbf","#f46d43","#a50026"] if layer=="LST" else
                 ["#7f3b08","#b35806","#f1a340","#998ec3","#542788"]))
-    grouped = (ee.Image.pixelArea().divide(10000).rename("ha").addBands(cls)
+    display_mask=ee.Image.constant(1).clip(geom).selfMask()
+    display_cls=cls.clip(geom).updateMask(display_mask)
+    grouped = (ee.Image.pixelArea().divide(10000).rename("ha").addBands(display_cls)
                .reduceRegion(reducer=ee.Reducer.sum().group(groupField=1,groupName="class"),
-                             geometry=g, scale=scale, maxPixels=50000000, bestEffort=True, tileScale=8)
+                             geometry=geom, scale=scale, maxPixels=50000000, bestEffort=True, tileScale=8)
                .getInfo())
     class_area=[{"class":x.get("class"),"areaHa":x.get("sum")} for x in grouped.get("groups",[])]
     dim = 512 if area_ha>1000000 else 640 if area_ha>250000 else 900
-    thumb = cls.getThumbURL({
-        "region": g.bounds(100),
+    visual=display_cls.visualize(min=1,max=5,palette=palette).updateMask(display_mask).clip(geom)
+    thumb_url = visual.getThumbURL({
+        "region": geom.bounds(100),
         "dimensions": dim,
-        "format":"png",
-        "min":1,
-        "max":5,
-        "palette":palette
+        "format":"png"
     })
+    with urllib.request.urlopen(thumb_url, timeout=120) as resp:
+        png_bytes=resp.read()
+    if not png_bytes:
+        raise RuntimeError("Earth Engine returned an empty raster image")
+    thumb="data:image/png;base64,"+base64.b64encode(png_bytes).decode("ascii")
     labels=["Very Low","Low","Moderate","High","Very High"]
     legend=[]
     for i,label in enumerate(labels):
@@ -228,7 +233,7 @@ def map_analysis(p):
         "stats":{"mean":st.get("value_mean"),"stdDev":st.get("value_stdDev"),"thresholds":th},
         "classArea":class_area,
         "methodology":(model_meta if model_meta else {"type":"relative AOI quintile visualization","classes":"P20/P40/P60/P80","validation":"Spectral index; no universal ecological threshold implied"}),
-        "provenance":{"engine":"Python Earth Engine API","version":"GEOECO-PY-MAP-1.1.0","start":start,"end":end,"scale":scale,"areaHa":area_ha,"simplifyMeters":simplify_m}
+        "provenance":{"engine":"Python Earth Engine API","version":"GEOECO-PY-MAP-1.2.0","start":start,"end":end,"scale":scale,"areaHa":area_ha,"simplifyMeters":simplify_m,"displayClip":"exact uploaded AOI geometry","rasterTransport":"embedded PNG data URI"}
     }
 
 def stats_analysis(p):
